@@ -1,0 +1,49 @@
+OUTPUT_ARCH(arm)
+ENTRY(__scratch_buffer)
+
+PHDRS 
+{ 
+  text PT_LOAD FLAGS(7); 
+  bss PT_LOAD FLAGS(7);
+}
+
+SECTIONS
+{
+	. = 0x01d00000;
+  .text : 
+	{ 
+	  *(.text)
+	} :text =0xDEADC0DE
+
+  .bss :
+  {
+    *(.bss) *(.data) *(.rodata*)
+  } :bss
+
+  /* Generic libc functions, can be rewritten */
+  PROVIDE(__memcpy = 0x13910c);
+  PROVIDE(__memmove = 0x139234);
+  PROVIDE(__memset = 0x1392d8);
+  PROVIDE(__strcpy = 0x1396b0 | 1);
+  PROVIDE(__idivsi3 = 0x1392f0);
+  PROVIDE(__udivsi3 = 0x1393c8);
+
+  /* REX core functions, necessary */
+  PROVIDE(rex_self = 0x1375dc | 1);
+  PROVIDE(rex_find_best_task = 0x137048 | 1);
+  PROVIDE(rex_context_switch = 0x13fa14 | 1);
+  PROVIDE(rex_wait = 0x137a32 | 1);
+  PROVIDE(rex_set_task_signals = 0x137570 | 1);
+  PROVIDE(rex_clear_task_signals = 0x13752c | 1);
+  PROVIDE(rex_queue_dpc = 0x137a06 | 1);
+  PROVIDE(heap_create = 0x5f8108 | 1);
+  PROVIDE(heap_malloc = 0x5f85f4 | 1);
+  PROVIDE(heap_free = 0x5f8852 | 1);
+
+  /* Diagnostic task functions, necessary */
+  PROVIDE(diag_alloc_packet = 0x5730b6 | 1);
+  PROVIDE(diag_queue_response_packet = 0x5732cc | 1);
+
+  /DISCARD/ : { *(.pdr) *(.gnu.attributes) *(.reginfo) ; *(.note) ; *(.comment) *(__ex_table) *(interp); }
+}
+

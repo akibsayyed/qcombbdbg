@@ -1,0 +1,28 @@
+OUTPUT_ARCH(arm)
+ENTRY(__cmd_dispatcher)
+
+PHDRS 
+{ 
+  text PT_LOAD FLAGS(7); 
+  bss PT_LOAD FLAGS(7);
+}
+
+SECTIONS
+{
+	. = 0x01d00000;
+  .text : 
+	{ 
+	  *(.text)
+	} :text =0xDEADC0DE
+
+  .bss :
+  {
+    *(.bss) *(.data) *(.rodata*)
+  } :bss
+
+  PROVIDE(__memcpy = 0x13910c);
+  PROVIDE(diag_alloc_packet = 0x5728d6 | 1);
+
+  /DISCARD/ : { *(.pdr) *(.gnu.attributes) *(.reginfo) ; *(.note) ; *(.comment) *(__ex_table) *(interp); }
+}
+
