@@ -58,11 +58,17 @@ RANDOM NOTES
   [Thread 68] #68 stopped.
 
   Displaced stepping is disabled for the moment (as of GDB 7.3.1, Thumb is not
-  supported). Consequently, do not try to single-step into heavily used system
-  functions (like memcpy, rex_wait, rex_set_signals, and so on).
+  supported). Consequently, do not try to single-step or put breakpoints into
+  heavily used system functions (like memcpy, rex_wait, rex_set_signals, and
+  so on). If the DIAG task or the USB task encounters an exception, the
+  debugger is dead.
 
 TODO
 
-  Tracepoints
-  Watchpoints
+  Tracepoints support.
+  Watchpoints support.
+
+CONTACT
+
+  Guillaume Delugre <guillaume (at) security-labs.org>
 
