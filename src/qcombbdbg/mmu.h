@@ -93,6 +93,7 @@ int mmu_probe_read(void *, unsigned int);
 int mmu_probe_write(void *, unsigned int);
 int mmu_probe_execute(void *);
 int mmu_set_access_protection(void *, int);
+void mmu_invalidate_insn_cache_line(void * addr);
 
 #endif
 

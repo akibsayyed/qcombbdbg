@@ -176,6 +176,7 @@ typedef struct __attribute__((packed)) _breakpoint
 
   union {
     struct {
+      char enabled;
       int hits;
       int pass;
 

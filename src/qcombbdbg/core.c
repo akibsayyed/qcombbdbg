@@ -506,18 +506,10 @@ int dbg_set_task_registers(task_id tid, context * ctx)
 }
 
 /*
- *  Insert a new memory breakpoint at the specified address.
+ *  Reads instruction at address.
  */
-int dbg_insert_breakpoint(void * addr, char kind)
+int dbg_read_insn(void * addr, char kind, int * insn)
 {
-  breakpoint * bp, * last;
-  int insn;
-  int prot;
-
-  if ( get_breakpoint_at_address(addr) )
-    return ERROR_BREAKPOINT_ALREADY_EXISTS; 
-
-  /* Get the instruction at the specified address */
   switch ( kind )
   {
     case ARM_CODE:
@@ -527,7 +519,7 @@ int dbg_insert_breakpoint(void * addr, char kind)
       if ( !mmu_probe_read(addr, 4) )
         return ERROR_INVALID_MEMORY_ACCESS;
 
-      insn = *(int *)addr;
+      *insn = *(arm_insn *)addr;
       break;
 
     case THUMB_CODE:
@@ -537,22 +529,61 @@ int dbg_insert_breakpoint(void * addr, char kind)
       if ( !mmu_probe_read(addr, 2) )
         return ERROR_INVALID_MEMORY_ACCESS;
 
-      insn = *(short *)addr;
+      *insn = *(thumb_insn *)addr;
       break;
 
     default:
       return ERROR_INVALID_CPU_MODE;
   }
 
-  /* Create the breakpoint structure */
-  bp = malloc(sizeof(breakpoint));
-  bp->type = BREAKPOINT_NORMAL;
-  bp->kind = kind;
-  bp->address = addr;
-  bp->original_insn = insn;
-  bp->next = 0;
+  return 0;
+}
 
-  /* Insert it in the breakpoint list */
+/*
+ *  Rewrites a single instruction in memory.
+ *  Temporarily sets the destination page as writable if necessary.
+ */
+void dbg_write_insn(void * addr, char kind, int insn)
+{
+  int prot;
+
+  NO_INTERRUPTS(
+    /* Enforces write access on the page */
+    prot = mmu_set_access_protection(addr, MMU_PROT_READ_WRITE);
+
+    if ( kind == ARM_CODE )
+      *(arm_insn *)addr = insn;
+    else
+      *(thumb_insn *)addr = insn;
+    
+    /* Restore page access */
+    mmu_set_access_protection(addr, prot);
+    
+    /* Invalidate the instruction cache line */
+    mmu_invalidate_insn_cache_line(addr);
+  );
+}
+
+/*
+ *  Inserts a BKPT instruction at a specified address.
+ */
+void dbg_insert_bkpt_insn(void * addr, char kind)
+{
+  int prot;
+
+  if ( kind == ARM_CODE )
+    dbg_write_insn(addr, kind, ARM_BKPT);
+  else
+    dbg_write_insn(addr, kind, THUMB_BKPT);
+}
+
+/*
+ *  Links the breakpoint structure into the breakpoint list.
+ */
+void dbg_register_breakpoint(breakpoint * bp)
+{
+  breakpoint * last;
+
   last = bps;
   while ( last && last->next )
     last = last->next;
@@ -567,24 +598,61 @@ int dbg_insert_breakpoint(void * addr, char kind)
     last->next = bp;
     bp->prev = last;
   }
+}
+
+/*
+ *  Unlinks the breakpoint from the breakpoint list.
+ *  Frees the breakpoint structure.
+ */
+void dbg_unregister_breakpoint(breakpoint * bp)
+{
+  if ( bp->prev )
+    bp->prev->next = bp->next;
+
+  if ( bp->next )
+    bp->next->prev = bp->prev;
+
+  if ( !bp->prev && !bp->next )
+    bps = 0;
+
+  free(bp);
+}
+
+/*
+ *  Inserts a new memory breakpoint at the specified address.
+ */
+int dbg_insert_breakpoint(void * addr, char kind)
+{
+  breakpoint * bp;
+  int insn, ret;
+
+  if ( get_breakpoint_at_address(addr) )
+    return ERROR_BREAKPOINT_ALREADY_EXISTS; 
+
+  /* Saves the original instruction at the specified address */
+  ret = dbg_read_insn(addr, kind, &insn);
+  if ( ret < 0 )
+    return ret;
+
+  /* Create the breakpoint structure */
+  bp = malloc(sizeof(breakpoint));
+  bp->type = BREAKPOINT_NORMAL;
+  bp->kind = kind;
+  bp->address = addr;
+  bp->original_insn = insn;
+  bp->next = 0;
+
+  /* Insert it in the breakpoint list */
+  dbg_register_breakpoint(bp);
 
   /* Insert the breakpoint in memory */
-  NO_INTERRUPTS(
-    prot = mmu_set_access_protection(addr, MMU_PROT_READ_WRITE);
-
-    if ( kind == ARM_CODE )
-      *(arm_insn *)addr = ARM_BKPT;
-    else
-      *(thumb_insn *)addr = THUMB_BKPT;
-    
-    mmu_set_access_protection(addr, prot);
-  );
+  dbg_insert_bkpt_insn(addr, kind);
 
   return 0;
 }
 
 /*
- *  Remove a breakpoint.
+ *  Removes a breakpoint.
  */
 int dbg_remove_breakpoint(void * addr)
 {
@@ -596,28 +664,10 @@ int dbg_remove_breakpoint(void * addr)
     return ERROR_NO_BREAKPOINT;
 
   /* Restore the original instruction */
-  NO_INTERRUPTS(
-    prot = mmu_set_access_protection(addr, MMU_PROT_READ_WRITE);
-
-    if ( bp->kind == ARM_CODE )
-      *(arm_insn *)addr = bp->original_insn;
-    else
-      *(thumb_insn *)addr = bp->original_insn;
-
-    mmu_set_access_protection(addr, prot);
-  );
+  dbg_write_insn(addr, bp->kind, bp->original_insn);
 
   /* Remove it from the breakpoint list */
-  if ( bp->prev )
-    bp->prev->next = bp->next;
-
-  if ( bp->next )
-    bp->next->prev = bp->prev;
-
-  if ( !bp->prev && !bp->next )
-    bps = 0;
-
-  free(bp);
+  dbg_unregister_breakpoint(bp);
 
   return 0;
 }
@@ -637,16 +687,7 @@ void dbg_remove_all_breakpoints(void)
     current = bp;
 
     /* Restore the original instruction */
-    NO_INTERRUPTS(
-      prot = mmu_set_access_protection(current->address, MMU_PROT_READ_WRITE);
-      
-      if ( current->kind == ARM_CODE )
-        *(arm_insn *)current->address = current->original_insn;
-      else
-        *(thumb_insn *)current->address = current->original_insn;
-    
-      mmu_set_access_protection(current->address, prot);
-    );
+    dbg_write_insn(current->address, current->kind, current->original_insn);
 
     bp = bp->next;
     free(current);

@@ -113,17 +113,42 @@ void __attribute__((naked)) mmu_invalidate_unified_tlb_entry(void * addr)
 }
 
 /*
+ *  Invalidates a single line if the instruction cache.
+ */
+void __attribute__((naked)) __mmu_invalidate_insn_cache_line(addr)
+{
+  ARM_ASSEMBLY(
+    "mcr p15, 0, r0, c7, c5, 1\n"
+    "bx lr\n"
+  );
+}
+
+/*
  *  Invalidates a single TLB entry.
  */
 void mmu_invalidate_tlb_entry(void * addr)
 {
-  if ( mmu_get_control_register() & MMU_CACHE_CONTROL_SEPARATE )
+  if ( mmu_get_cache_type_register() & MMU_CACHE_CONTROL_SEPARATE )
   {
     mmu_invalidate_insn_tlb_entry(addr);
     mmu_invalidate_data_tlb_entry(addr);
   }
   else
     mmu_invalidate_unified_tlb_entry(addr);
+}
+
+/*
+ *  Invalidates a single instruction cache line.
+ *
+ *  This is only relevant if we are using separate caches for instructions/data.
+ *  In that case, rewriting a instruction in memory will only update the data cache.
+ *  As the original instruction may still be present in the instruction cache, 
+ *  we need to invalidate its line.
+ */
+void mmu_invalidate_insn_cache_line(void * addr)
+{
+  if ( mmu_get_cache_type_register() & MMU_CACHE_CONTROL_SEPARATE )
+    __mmu_invalidate_insn_cache_line(addr);
 }
 
 /*
