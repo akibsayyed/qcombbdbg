@@ -44,6 +44,8 @@ typedef struct __attribute__((packed))
 #define MMU_SECTION_AP_READ_WRITE 3
 
 #define MMU_CACHE_CONTROL_SEPARATE (1 << 24)
+#define MMU_CACHE_TYPE_MASK (0xf << 25)
+#define MMU_CACHE_TYPE_WRITE_THROUGH 0
 
 /* Page protections */
 enum page_access
@@ -93,7 +95,7 @@ int mmu_probe_read(void *, unsigned int);
 int mmu_probe_write(void *, unsigned int);
 int mmu_probe_execute(void *);
 int mmu_set_access_protection(void *, int);
-void mmu_invalidate_insn_cache_line(void * addr);
+void mmu_sync_insn_cache_at(void * addr);
 
 #endif
 

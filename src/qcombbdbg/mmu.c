@@ -113,12 +113,23 @@ void __attribute__((naked)) mmu_invalidate_unified_tlb_entry(void * addr)
 }
 
 /*
- *  Invalidates a single line if the instruction cache.
+ *  Invalidates a single line in the instruction cache.
  */
-void __attribute__((naked)) __mmu_invalidate_insn_cache_line(addr)
+void __attribute__((naked)) mmu_invalidate_insn_cache_line(void * addr)
 {
   ARM_ASSEMBLY(
     "mcr p15, 0, r0, c7, c5, 1\n"
+    "bx lr\n"
+  );
+}
+
+/*
+ *  Cleans a single line in the data cache (commits cache to memory).
+ */
+void __attribute__((naked)) mmu_clean_data_cache_line(void * addr)
+{
+  ARM_ASSEMBLY(
+    "mcr p15, 0, r0, c7, c10, 1\n"
     "bx lr\n"
   );
 }
@@ -138,17 +149,26 @@ void mmu_invalidate_tlb_entry(void * addr)
 }
 
 /*
- *  Invalidates a single instruction cache line.
+ *  Clean a single data cache line.
+ *  Then invalidates the instruction cache line.
  *
  *  This is only relevant if we are using separate caches for instructions/data.
  *  In that case, rewriting a instruction in memory will only update the data cache.
  *  As the original instruction may still be present in the instruction cache, 
  *  we need to invalidate its line.
  */
-void mmu_invalidate_insn_cache_line(void * addr)
+void mmu_sync_insn_cache_at(void * addr)
 {
-  if ( mmu_get_cache_type_register() & MMU_CACHE_CONTROL_SEPARATE )
-    __mmu_invalidate_insn_cache_line(addr);
+  unsigned int cache_type;
+
+  cache_type = mmu_get_cache_type_register();
+  if ( cache_type & MMU_CACHE_CONTROL_SEPARATE )
+  {
+    if ( cache_type & MMU_CACHE_TYPE_MASK != MMU_CACHE_TYPE_WRITE_THROUGH )
+      mmu_invalidate_clean_data_line(addr);
+
+    mmu_invalidate_insn_cache_line(addr);
+  }
 }
 
 /*

@@ -506,7 +506,7 @@ int dbg_set_task_registers(task_id tid, context * ctx)
 }
 
 /*
- *  Reads instruction at address.
+ *  Reads a single instruction at address.
  */
 int dbg_read_insn(void * addr, char kind, int * insn)
 {
@@ -542,6 +542,8 @@ int dbg_read_insn(void * addr, char kind, int * insn)
 /*
  *  Rewrites a single instruction in memory.
  *  Temporarily sets the destination page as writable if necessary.
+ *
+ *  This function preserves instruction cache coherency.
  */
 void dbg_write_insn(void * addr, char kind, int insn)
 {
@@ -559,8 +561,8 @@ void dbg_write_insn(void * addr, char kind, int insn)
     /* Restore page access */
     mmu_set_access_protection(addr, prot);
     
-    /* Invalidate the instruction cache line */
-    mmu_invalidate_insn_cache_line(addr);
+    /* Clean the data cache, invalidate the instruction cache line */
+    mmu_sync_insn_cache_at(addr);
   );
 }
 
@@ -897,8 +899,6 @@ response_packet * __cmd_attach(void)
     diag_task = rex_self();
     create_dbg_heap((void *)DBG_HEAP_BASE_ADDR, DBG_HEAP_SIZE);
     create_tasks_mapping();
-    mmu_set_access_protection(0, MMU_PROT_READ_WRITE);
-    *(int *)0 = 0;
     install_interrupt_handlers();
     __memset(__scratch_buffer, 0, sizeof(__scratch_buffer));
 
