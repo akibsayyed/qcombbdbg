@@ -165,7 +165,7 @@ void mmu_sync_insn_cache_at(void * addr)
   if ( cache_type & MMU_CACHE_CONTROL_SEPARATE )
   {
     if ( cache_type & MMU_CACHE_TYPE_MASK != MMU_CACHE_TYPE_WRITE_THROUGH )
-      mmu_invalidate_clean_data_line(addr);
+      mmu_clean_data_cache_line(addr);
 
     mmu_invalidate_insn_cache_line(addr);
   }

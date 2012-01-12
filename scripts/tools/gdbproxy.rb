@@ -28,6 +28,8 @@
 $: << '..'
 require 'socket'
 require 'strscan'
+require 'rexml/document'
+
 require 'diagtaskclient'
   
 module Commands
@@ -141,7 +143,8 @@ class GdbProxy
   [
     'QNonStop',
     'QStartNoAckMode',
-    'qXfer:features:read'
+    'qXfer:features:read',
+    'qXfer:threads:read'
   ]
 
   def initialize(port, tty)
@@ -298,7 +301,7 @@ class GdbProxy
     dbg_send_cmd(Commands::RESUME_TASK, [ tid, :u32 ])
   end
 
-  def dbg_get_task_info(tid)
+  def dbg_get_task_desc(tid)
     resp = dbg_send_cmd(Commands::GET_TASK_INFO, [ tid, :u32])
   
     wait, active, name = resp.unpack('V2A*')
@@ -307,6 +310,24 @@ class GdbProxy
       :active_signals => active,
       :name => name
     }
+        
+    "#{name.ljust(13)} [wait: 0x#{wait.to_s(16).rjust(8,'0')}; active: 0x#{active.to_s(16).rjust(8,'0')}]"
+  end
+
+  def build_xml_thread_list
+    @ntasks ||= dbg_get_num_tasks
+    thr_xml_template = '<?xml version="1.0"?><threads></threads>'
+    thr_xml = REXML::Document.new(thr_xml_template)
+
+    (1..@ntasks).each do |tid|
+      thr_entry = REXML::Element.new('thread')
+      thr_entry.add_attribute('id', tid.to_s(16))
+      thr_entry.text = dbg_get_task_desc(tid)
+
+      thr_xml.root.add_element(thr_entry)
+    end
+
+    thr_xml.to_s
   end
 
   def dbg_get_task_state(tid)
@@ -430,7 +451,20 @@ class GdbProxy
             'l'
           end
 
-        send_packet("#{code}#{TARGET_XML[$1.hex, $2.hex]}")
+        send_packet("#{code}#{TARGET_XML[offset, length]}")
+
+      when /^qXfer:threads:read::(.*),(.*)/
+        offset, length = $1.hex, $2.hex
+        
+        @xml_thread_list = build_xml_thread_list if offset == 0
+        code = 
+          if offset + length < @xml_thread_list.length
+            'm'
+          else
+            'l'
+          end
+
+        send_packet("#{code}#{@xml_thread_list[offset, length]}")
 
       when /^QNonStop:(\d)/
         fail "Non-stop mode must be enabled" if $1.to_i == 0
@@ -441,17 +475,16 @@ class GdbProxy
         send_packet('OK')
 
       when /^qfThreadInfo/
-        ntasks = dbg_get_num_tasks
-        send_packet("m#{(1..ntasks).to_a.map{|t| t.to_s(16)}.join(',')}")
+        @ntasks ||= dbg_get_num_tasks
+        send_packet("m#{(1..@ntasks).to_a.map{|t| t.to_s(16)}.join(',')}")
 
       when /^qsThreadInfo/
         send_packet('l')
 
       when /^qThreadExtraInfo,(.*)/
         id = $1.hex
-        info = dbg_get_task_info(id)
         
-        desc = "#{info[:name].ljust(13)} [wait: 0x#{info[:wait_signals].to_s(16).rjust(8,'0')}; active: 0x#{info[:active_signals].to_s(16).rjust(8,'0')}]"
+        desc = dbg_get_task_desc(id) 
         send_packet(desc.unpack('H*')[0])
 
       when /^qAttached/
