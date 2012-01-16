@@ -23,8 +23,6 @@
 
 #include "rex.h"
 
-register char * stack asm("sp");
-
 /* Hooked command from the diagnostic task */
 #define DBG_CMD 0x7b
 

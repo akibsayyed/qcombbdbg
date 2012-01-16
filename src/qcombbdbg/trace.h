@@ -256,6 +256,7 @@ typedef struct
   trace_buffer tbuffer;
 } trace_engine;
 
+void trace_engine_init(void);
 void trace_buffer_clear(void);
 trace_variable * trace_get_variable(unsigned short);
 void trace_set_variable(unsigned short, int);

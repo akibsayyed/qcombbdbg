@@ -23,6 +23,7 @@
  */
 
 #include "rex.h"
+#include "interrupts.h"
 #include "mmu.h"
 #include "core.h"
 #include "trace.h"

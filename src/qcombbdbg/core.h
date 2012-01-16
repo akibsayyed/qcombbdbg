@@ -320,6 +320,7 @@ typedef struct __attribute__((packed, aligned(4)))
 void * malloc(int);
 void free(void *);
 response_packet * alloc_response_packet(int);
+int dbg_read_memory(void *, void *, unsigned int);
 
 #ifdef DEBUG
 response_packet * __cmd_echo(request_packet *, int);

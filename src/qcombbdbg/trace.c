@@ -199,7 +199,7 @@ int trace_buffer_trace_memory(void * address, unsigned short length)
   tentry->type = TRACE_ENTRY_MEM;
   tentry->entry.mem.length = length;
 
-  if ( dbg_read_memory(&tentry->entry.mem.data, length) )
+  if ( dbg_read_memory(address, &tentry->entry.mem.data, length) )
   {
     free(tentry);
     trace_error(TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
@@ -287,6 +287,8 @@ trace_frame * trace_buffer_create_frame(unsigned short tp_id)
   tengine.tbuffer.current_frame = tframe;
   tengine.tbuffer.frame_created++;
   tengine.tbuffer.frame_count++;
+
+  return tframe;
 }
 
 /*
@@ -320,7 +322,7 @@ void trace_buffer_clear(void)
   tengine.tbuffer.used = 0;
 }
 
-int trace_vm_init(void)
+void trace_vm_init(void)
 {
   tengine.vm.base_address = 0;
   tengine.vm.pc = 0;

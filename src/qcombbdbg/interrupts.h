@@ -54,6 +54,8 @@ typedef struct
 #define RESTORE_VECTOR_HANDLER(vector) \
   ivt->vector = original_ivt.vector;
 
+void cpu_interrupts_disable(void);
+void cpu_interrupts_enable(void);
 void install_interrupt_handlers(void);
 void restore_interrupt_handlers(void);
 

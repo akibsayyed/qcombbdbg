@@ -115,28 +115,28 @@ typedef void * (* rex_apc_routine)(void *);
 #define TASK_ENABLE(task) task->disabled = 0;
 #define TASK_DISABLE(task) task->disabled = 1;
 
-extern __attribute__((long_call)) void __memcpy(void *, void *, int);
-extern __attribute__((long_call)) void __memmove(void *, void *, int);
-extern __attribute__((long_call)) void __memset(void *, char, int);
-extern __attribute__((long_call)) char * __strcpy(char *, const char *);
+extern void __memcpy(void *, void *, int);
+extern void __memmove(void *, void *, int);
+extern void __memset(void *, char, int);
+extern char * __strcpy(char *, const char *);
 
-extern __attribute__((long_call)) unsigned long long int __idivsi3(int, int);
-extern __attribute__((long_call)) unsigned long long int __udivsi3(unsigned int, unsigned int);
+extern unsigned long long int __idivsi3(int, int);
+extern unsigned long long int __udivsi3(unsigned int, unsigned int);
 
-extern __attribute__((long_call)) rex_task * rex_self(void);
-extern __attribute__((long_call)) void rex_find_best_task(rex_task *);
-extern __attribute__((long_call)) void rex_context_switch(void);
-extern __attribute__((long_call)) int rex_wait(int signals);
-extern __attribute__((long_call)) int rex_set_task_signals(rex_task *, int);
-extern __attribute__((long_call)) int rex_clear_task_signals(rex_task *, int);
-extern __attribute__((long_call)) int rex_queue_dpc(rex_apc_routine, rex_task *, void *);
+extern rex_task * rex_self(void);
+extern void rex_find_best_task(rex_task *);
+extern void rex_context_switch(void);
+extern int rex_wait(int signals);
+extern int rex_set_task_signals(rex_task *, int);
+extern int rex_clear_task_signals(rex_task *, int);
+extern int rex_queue_dpc(rex_apc_routine, rex_task *, void *);
 
-extern __attribute__((long_call)) void heap_create(rex_heap *, void *, int, void (*)(rex_heap *));
-extern __attribute__((long_call)) void * heap_malloc(rex_heap *, int);
-extern __attribute__((long_call)) void heap_free(rex_heap *, void *);
+extern void heap_create(rex_heap *, void *, int, void (*)(rex_heap *));
+extern void * heap_malloc(rex_heap *, int);
+extern void heap_free(rex_heap *, void *);
 
-extern __attribute__((long_call)) char * diag_alloc_packet(char, int);
-extern __attribute__((long_call)) void diag_queue_response_packet(void *);
+extern char * diag_alloc_packet(char, int);
+extern void diag_queue_response_packet(void *);
 
 extern rex_task * tasks_head;
 
