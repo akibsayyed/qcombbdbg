@@ -50,6 +50,22 @@ char __scratch_buffer[128];
   if (!initialized) return 0;
 
 #define foreach_breakpoint(var) for ( var = bps; var != 0; var = var->next )
+#define TASK_INFO(tid) tlist.tasks[tid - 1]
+
+static inline void * memmove_inline(void * dst, void * src, unsigned int size)
+{
+  int i;
+
+  if ( dst < src )
+    for ( i = 0; i < size; ++i )
+      ((char *)dst)[i] = ((char *)src)[i];
+
+  else if ( dst > src )
+    for ( i = size - 1; i >= 0; --i )
+      ((char *)dst)[i] = ((char *)src)[i];
+
+  return dst;
+}
 
 /*
  *  Initialize the debugger heap.
@@ -151,8 +167,8 @@ void create_tasks_mapping(void)
      */
     for ( id = 1; id <= num_tasks; ++id, task = task->prev_task )
     {
-      tlist.tasks[id - 1].task = task;
-      tlist.tasks[id - 1].state = TASK_STATE_ALIVE;
+      TASK_INFO(id).task = task;
+      TASK_INFO(id).state = TASK_STATE_ALIVE;
     }
   
   );
@@ -166,7 +182,7 @@ rex_task * get_task_from_id(task_id tid)
   if ( tid <= 0 || tid > tlist.num_tasks )
     return 0;
 
-  return tlist.tasks[tid - 1].task;
+  return TASK_INFO(tid).task;
 }
 
 /*
@@ -179,7 +195,7 @@ task_id get_current_task_id(void)
 
   current = rex_self();
   for ( tid = 1; tid <= tlist.num_tasks; ++tid )
-    if ( tlist.tasks[tid - 1].task == current )
+    if ( TASK_INFO(tid).task == current )
       return tid;
 
   return 0;
@@ -192,7 +208,7 @@ task_id get_current_task_id(void)
 void set_task_state(task_id tid, int state)
 {
   if ( tid > 0 && tid <= tlist.num_tasks )
-    tlist.tasks[tid - 1].state = state;
+    TASK_INFO(tid).state = state;
 }
 
 /*
@@ -201,7 +217,7 @@ void set_task_state(task_id tid, int state)
 int get_task_state(task_id tid)
 {
   if ( tid > 0 && tid <= tlist.num_tasks )
-    return tlist.tasks[tid - 1].state;
+    return TASK_INFO(tid).state;
 
   return TASK_STATE_UNKNOWN;
 }
@@ -257,212 +273,6 @@ void send_event_packet(event_packet * pkt)
 }
 
 /*
- *  Callback routine handling all break events.
- */
-void __attribute__((naked)) dbg_break_handler(int event, void * address)
-{
-  event_packet * packet;
-  task_id current_tid;
-  int saved_sigs;
-  rex_task * self;
-  saved_context * saved_ctx;
-
-  asm("push {lr}");
-
-  if ( event == EVENT_BREAKPOINT && !get_breakpoint_at_address(address) )
-    event = EVENT_MEMORY_FAULT;
-
-  stack -= sizeof(int); // $sp = $sp - 4
-  *(int *)stack = event; // store this one to help gcc
-
-  current_tid = get_current_task_id();
-  set_task_state(current_tid, TASK_STATE_HALTED);
-  
-  /* 
-   * The diagnostic task code checks whether it is actually executing in the diag task context.
-   * We instruct the diag task to execute send_event_packet as a DPC.
-   */
-  packet = malloc(sizeof(event_packet));
-  if ( packet )
-  {
-    packet->tid = current_tid;
-    packet->event = event;
-
-    switch ( event ) 
-    {
-      case EVENT_STOP:
-        saved_ctx = (saved_context *)&stack[8 + REX_EXECUTE_APC_STACK_SIZE];
-        break;
-
-      default:
-        saved_ctx = (saved_context *)&stack[8];
-        break;
-    }
-      
-    tlist.tasks[current_tid - 1].ctx = saved_ctx; /* For future access to task registers */
-    tlist.tasks[current_tid - 1].saved_sp = (int)(saved_ctx + 1);
-    dbg_get_task_registers(current_tid, &packet->ctx);
-     
-    rex_queue_dpc((rex_apc_routine)&send_event_packet, diag_task, packet);
-  }
-
-  self = rex_self();
-
-  /*
-   *  Those few next lines are important and deserve some explanation.
-   *  We can be executing here in interrupt or APC context.
-   *  Consequently, the current task might be waiting for some signals.
-   *  As we do not want them to awake us, we must disable them and restore them later.
-   *
-   *  Also, the task will be scheduled even in a waiting state if it has pending APCs.
-   *  Especially if we ordered the task to halt, we are here executing in APC context, so the task
-   *  cannot just be put in wait state directly. 
-   *
-   *  TASK_DISABLE() will set the task as non-schedulable for this reason.
-   */
-  saved_sigs = self->wait_signals;
-  self->wait_signals = 0;
-  TASK_DISABLE(self);
-
-  rex_wait(SIGNAL_DEBUG);
- 
-  /* Remove the debug signal */
-  rex_clear_task_signals(self, SIGNAL_DEBUG);
-
-  /* Handle the case where pending signals have been set while the task was halted */
-  if ( saved_sigs & self->active_signals )
-    self->wait_signals = 0;
-  else
-    self->wait_signals = saved_sigs;
-  
-  set_task_state(current_tid, TASK_STATE_ALIVE);
-
-  /* Load return address */
-  asm(
-    "ldr r6, [sp, #4]\n"
-    "mov r8, r6\n"
-  );
-
-  /* 
-   * $sp might have been modified while the task was halted 
-   * We need to adjust it so that we return properly.
-   */
-  if ( (int)(saved_ctx + 1) != tlist.tasks[current_tid - 1].saved_sp )
-    switch ( *(int *)stack ) /* event */
-    {
-      case EVENT_STOP:
-        /* 
-         * We have to account for the return to rex_execute_apc().
-         * Duplicate the stack frame {r3-r7, lr}
-         */
-        __memmove(
-          (char *)tlist.tasks[current_tid - 1].saved_sp - REX_EXECUTE_APC_STACK_SIZE - sizeof(saved_context),
-          (char *)saved_ctx - REX_EXECUTE_APC_STACK_SIZE, 
-          REX_EXECUTE_APC_STACK_SIZE + sizeof(saved_context)
-        );
-        
-        stack = (char *)tlist.tasks[current_tid - 1].saved_sp - REX_EXECUTE_APC_STACK_SIZE - sizeof(saved_context);
-
-        break;
-      
-      default:
-        __memmove(
-          (char *)tlist.tasks[current_tid - 1].saved_sp - sizeof(saved_context),
-          (char *)saved_ctx,
-          sizeof(saved_context)
-        );
-
-        stack = (char *)tlist.tasks[current_tid - 1].saved_sp - sizeof(saved_context);
-
-        break;
-    }
-  else
-    stack += 8; // $sp unmodified, $sp = $sp + 8
-
-  /* Return to context */
-  asm("bx r8");
-}
-
-/*
- *  Instruct a given task to stop execution.
- */
-int dbg_stop_task(task_id tid)
-{
-  rex_task * task;
-  event_packet * event;
-
-  task = get_task_from_id(tid);
-  if ( !task )
-    return ERROR_TASK_NOT_FOUND;
-
-  if ( get_task_state(tid) != TASK_STATE_ALIVE )
-    return ERROR_INVALID_TASK_STATE;
-
-  /*
-   * APCs do not work against the IDLE task.
-   * It is not a good idea to stop it anyway, just fake it.
-   */
-  if ( tid == TASK_IDLE )
-  {
-    set_task_state(tid, TASK_STATE_HALTED);
-    
-    tlist.tasks[tid - 1].ctx = tlist.tasks[tid - 1].task->stack_ptr;
-    tlist.tasks[tid - 1].saved_sp = (int)(tlist.tasks[tid - 1].ctx + 1);
-
-    event = alloc_event_packet();
-    event->tid = tid;
-    event->event = EVENT_STOP;
-    dbg_get_task_registers(tid, &event->ctx);
-    
-    diag_queue_response_packet(event);
-  }
-  else
-    rex_queue_dpc((rex_apc_routine)&dbg_break_handler, task, EVENT_STOP);
-  
-  return 0;
-}
-
-/*
- *  Resumes task execution.
- */
-int dbg_resume_task(task_id tid)
-{
-  rex_task * task;
-
-  task = get_task_from_id(tid);
-  if ( !task )
-    return ERROR_TASK_NOT_FOUND;
-
-  if ( get_task_state(tid) != TASK_STATE_HALTED )
-    return ERROR_INVALID_TASK_STATE;
-
-  if ( tid == TASK_IDLE )
-  {
-    /* Fake resume of IDLE */
-    set_task_state(tid, TASK_STATE_ALIVE); 
-  }
-  else
-  {
-    TASK_ENABLE(task);
-    rex_set_task_signals(task, SIGNAL_DEBUG);
-  }
-
-  return 0;
-}
-
-/*
- *  Resumes any halted task.
- *  Used when detaching the debugger.
- */
-void dbg_resume_all_tasks(void)
-{
-  int tid;
-
-  for ( tid = 1; tid <= tlist.num_tasks; ++tid )
-    dbg_resume_task(tid);
-}
-
-/*
  *  Gets the registers of a halted task.
  */
 int dbg_get_task_registers(task_id tid, context * ctx)
@@ -476,8 +286,8 @@ int dbg_get_task_registers(task_id tid, context * ctx)
   if ( get_task_state(tid) != TASK_STATE_HALTED )
     return ERROR_INVALID_TASK_STATE;
 
-  saved_ctx = tlist.tasks[tid - 1].ctx;
-  saved_sp = tlist.tasks[tid - 1].saved_sp;
+  saved_ctx = TASK_INFO(tid).ctx;
+  saved_sp = TASK_INFO(tid).saved_sp;
 
   __memcpy(&ctx->saved_ctx, saved_ctx, sizeof(saved_context));
   ctx->sp = saved_sp;
@@ -499,8 +309,8 @@ int dbg_set_task_registers(task_id tid, context * ctx)
   if ( get_task_state(tid) != TASK_STATE_HALTED )
     return ERROR_INVALID_TASK_STATE;
 
-  __memcpy(tlist.tasks[tid - 1].ctx, &ctx->saved_ctx, sizeof(saved_context));
-  tlist.tasks[tid - 1].saved_sp = ctx->sp;
+  __memcpy(TASK_INFO(tid).ctx, &ctx->saved_ctx, sizeof(saved_context));
+  TASK_INFO(tid).saved_sp = ctx->sp;
 
   return 0;
 }
@@ -513,20 +323,20 @@ int dbg_read_insn(void * addr, char kind, int * insn)
   switch ( kind )
   {
     case ARM_CODE:
-      if ( (int)addr % 4 )
+      if ( (int)addr % sizeof(arm_insn) )
         return ERROR_BAD_ADDRESS_ALIGNMENT;
 
-      if ( !mmu_probe_read(addr, 4) )
+      if ( !mmu_probe_read(addr, sizeof(arm_insn)) )
         return ERROR_INVALID_MEMORY_ACCESS;
 
       *insn = *(arm_insn *)addr;
       break;
 
     case THUMB_CODE:
-      if ( (int)addr % 2 )
+      if ( (int)addr % sizeof(thumb_insn) )
         return ERROR_BAD_ADDRESS_ALIGNMENT;
 
-      if ( !mmu_probe_read(addr, 2) )
+      if ( !mmu_probe_read(addr, sizeof(thumb_insn)) )
         return ERROR_INVALID_MEMORY_ACCESS;
 
       *insn = *(thumb_insn *)addr;
@@ -653,6 +463,24 @@ int dbg_insert_breakpoint(void * addr, char kind)
   return 0;
 }
 
+void dbg_enable_tracepoint(breakpoint * tp)
+{
+  if ( !tp->trace.enabled )
+  {
+    dbg_insert_bkpt_insn(tp->address, tp->kind);
+    tp->trace.enabled = 1;
+  }
+}
+
+void dbg_disable_tracepoint(breakpoint * tp)
+{
+  if ( tp->trace.enabled )
+  {
+    dbg_write_insn(tp->address, tp->kind, tp->original_insn);
+    tp->trace.enabled = 0;
+  }
+}
+
 /*
  *  Removes a breakpoint.
  */
@@ -717,7 +545,7 @@ int dbg_read_memory(void * start, void * out,  unsigned int size)
 
   foreach_breakpoint(bp)
   {
-    bp_size = (bp->kind == ARM_CODE) ? 4 : 2;
+    bp_size = (bp->kind == ARM_CODE) ? sizeof(arm_insn) : sizeof(thumb_insn);
     bp_end = bp->address + bp_size - 1;
     
     /* Last breakpoint byte in range */
@@ -736,6 +564,270 @@ int dbg_read_memory(void * start, void * out,  unsigned int size)
   }
 
   return 0;
+}
+
+/*
+ *  Callback routine handling trace events.
+ *  TODO
+ */
+void dbg_trace_handler(breakpoint * tp, saved_context * ctx)
+{
+  dbg_disable_tracepoint(tp);
+}
+
+/*
+ *  Notifies a debug event to the debugger client.
+ */
+void dbg_notify_event(task_id tid, int event)
+{
+  event_packet * packet;
+
+  /* 
+   * The diagnostic task code checks whether it is actually executing in the diag task context.
+   * We instruct the diag task to execute send_event_packet as a DPC.
+   */
+  packet = malloc(sizeof(event_packet));
+  if ( packet )
+  {
+    packet->tid = tid;
+    packet->event = event;
+    dbg_get_task_registers(tid, &packet->ctx);
+     
+    rex_queue_dpc((rex_apc_routine)&send_event_packet, diag_task, packet);
+  }
+}
+
+/*
+ *  Invokes the REX kernel API to put the current task in a wait state.
+ *  Task can be resumed by sending it the DEBUGGER_SIGNAL.
+ */
+void dbg_enter_wait_state()
+{
+  rex_task * self;
+  int saved_sigs;
+
+  self = rex_self();
+
+  /*
+   *  Those few next lines are important and deserve some explanation.
+   *  We can be executing here in interrupt or APC context.
+   *  Consequently, the current task might be waiting for some signals.
+   *  As we do not want them to awake us, we must disable them and restore them later.
+   *
+   *  Also, the task will be scheduled even in a waiting state if it has pending APCs.
+   *  Especially if we ordered the task to halt, we are here executing in APC context, so the task
+   *  cannot just be put in wait state directly. 
+   *
+   *  TASK_DISABLE() will set the task as non-schedulable for this reason.
+   */
+  saved_sigs = self->wait_signals;
+  self->wait_signals = 0;
+  TASK_DISABLE(self);
+
+  rex_wait(SIGNAL_DEBUG);
+ 
+  /* Remove the debug signal */
+  rex_clear_task_signals(self, SIGNAL_DEBUG);
+
+  /* Handle the case where pending signals have been set while the task was halted */
+  if ( saved_sigs & self->active_signals )
+    self->wait_signals = 0;
+  else
+    self->wait_signals = saved_sigs;
+}
+
+/*
+ *  Interrupts the current task and notifies the debugger.
+ */
+void dbg_do_break(int event, saved_context * saved_ctx)
+{
+  task_id current_tid;
+
+  current_tid = get_current_task_id();
+
+  /* 
+   * Save the pointer to the task context in the task structure,
+   * for future access to task registers.
+   */
+  TASK_INFO(current_tid).ctx = saved_ctx;
+  TASK_INFO(current_tid).saved_sp = (int)(saved_ctx + 1);
+
+  set_task_state(current_tid, TASK_STATE_HALTED);
+
+  /* Notify for task break */
+  dbg_notify_event(current_tid, event);
+
+  /* Put the current task in a wait state */
+  dbg_enter_wait_state();
+  
+  set_task_state(current_tid, TASK_STATE_ALIVE);
+}
+
+/*
+ *  Callback routine handling all break events.
+ */
+void __attribute__((naked)) dbg_break_handler(int event, saved_context * saved_ctx)
+{
+  task_id current_tid;
+  breakpoint * bp;
+  int saved_sp;
+
+  asm volatile ("mov r8, lr");
+
+  /* A prefetch abort interrupt occurred */
+  if ( event == EVENT_BREAKPOINT )
+  {
+    bp = get_tracepoint_at_address((void *)saved_ctx->pc);
+
+    /* Transfer control to the tracepoint handler */ 
+    if ( bp )
+      dbg_trace_handler(bp, saved_ctx);
+
+    /* Check if a breakpoint has been defined at the exception address */
+    bp = get_breakpoint_at_address((void *)saved_ctx->pc);
+    if ( !bp )
+      event = EVENT_MEMORY_FAULT;
+  }
+
+  /* Save the original stack pointer before break */
+  saved_sp = (int)(saved_ctx + 1);
+
+  /*
+   *  Interrupts the current task.
+   */
+  dbg_do_break(event, saved_ctx);
+
+  /* 
+   * $sp might have been modified while the task was halted 
+   * We need to adjust it so that we return properly.
+   */
+  current_tid = get_current_task_id();
+
+  if ( saved_sp != TASK_INFO(current_tid).saved_sp )
+    switch ( event ) 
+    {
+      case EVENT_STOP:
+        /* 
+         * We have to account for the return to rex_execute_apc().
+         * Duplicate the stack frame {r3-r7, lr}
+         */
+        memmove_inline(
+          (char *) TASK_INFO(current_tid).saved_sp - REX_EXECUTE_APC_STACK_SIZE - sizeof(saved_context),
+          (char *) saved_ctx - REX_EXECUTE_APC_STACK_SIZE, 
+          REX_EXECUTE_APC_STACK_SIZE + sizeof(saved_context)
+        );
+        
+        stack = (char *) TASK_INFO(current_tid).saved_sp - REX_EXECUTE_APC_STACK_SIZE - sizeof(saved_context);
+
+        break;
+      
+      default:
+        memmove_inline(
+          (char *) TASK_INFO(current_tid).saved_sp - sizeof(saved_context),
+          (char *) saved_ctx,
+          sizeof(saved_context)
+        );
+
+        stack = (char *) TASK_INFO(current_tid).saved_sp - sizeof(saved_context);
+
+        break;
+    }
+
+  /* Return to context */
+  asm volatile ("bx r8");
+}
+
+/*
+ *  Wrapper callback function when user forces a task interrupt.
+ *  Transfers control to dbg_break_handler with pointer to saved task context.
+ */
+void __attribute__((naked)) dbg_interrupt_from_apc(void)
+{
+  asm(
+    "add r1, sp, %[ctx_offset]\n"
+    "mov r0, %[event]\n"
+    "b dbg_break_handler\n"
+    :: [event] "i" (EVENT_STOP), [ctx_offset] "i" (REX_EXECUTE_APC_STACK_SIZE)
+  );
+}
+
+/*
+ *  Instruct a given task to stop execution.
+ */
+int dbg_stop_task(task_id tid)
+{
+  rex_task * task;
+  event_packet * event;
+
+  task = get_task_from_id(tid);
+  if ( !task )
+    return ERROR_TASK_NOT_FOUND;
+
+  if ( get_task_state(tid) != TASK_STATE_ALIVE )
+    return ERROR_INVALID_TASK_STATE;
+
+  /*
+   * APCs do not work against the IDLE task.
+   * It is not a good idea to stop it anyway, just fake it.
+   */
+  if ( tid == TASK_IDLE )
+  {
+    set_task_state(tid, TASK_STATE_HALTED);
+    
+    tlist.tasks[tid - 1].ctx = tlist.tasks[tid - 1].task->stack_ptr;
+    tlist.tasks[tid - 1].saved_sp = (int)(tlist.tasks[tid - 1].ctx + 1);
+
+    event = alloc_event_packet();
+    event->tid = tid;
+    event->event = EVENT_STOP;
+    dbg_get_task_registers(tid, &event->ctx);
+    
+    diag_queue_response_packet(event);
+  }
+  else
+    rex_queue_dpc((rex_apc_routine)&dbg_interrupt_from_apc, task, 0);
+  
+  return 0;
+}
+
+/*
+ *  Resumes task execution.
+ */
+int dbg_resume_task(task_id tid)
+{
+  rex_task * task;
+
+  task = get_task_from_id(tid);
+  if ( !task )
+    return ERROR_TASK_NOT_FOUND;
+
+  if ( get_task_state(tid) != TASK_STATE_HALTED )
+    return ERROR_INVALID_TASK_STATE;
+
+  if ( tid == TASK_IDLE )
+  {
+    /* Fake resume of IDLE */
+    set_task_state(tid, TASK_STATE_ALIVE); 
+  }
+  else
+  {
+    TASK_ENABLE(task);
+    rex_set_task_signals(task, SIGNAL_DEBUG);
+  }
+
+  return 0;
+}
+
+/*
+ *  Resumes any halted task.
+ *  Used when detaching the debugger.
+ */
+void dbg_resume_all_tasks(void)
+{
+  int tid;
+
+  for ( tid = 1; tid <= tlist.num_tasks; ++tid )
+    dbg_resume_task(tid);
 }
 
 /*************************

@@ -106,6 +106,10 @@ void __attribute__((naked)) prefetch_abort_handler(void)
     "msr cpsr_c, %[svc_mode]\n"     /* 11010011b : move to supervisor mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store r0 */
     "stmfd sp!, {r1}\n"             /* store spsr, return frame complete */
+
+    "mov r0, %[event]\n"            /* r0 = EVENT_BREAKPOINT */
+    "mov r1, sp\n"                  /* r1 = saved context */
+
     "msr cpsr_c, %[abort_mode]\n"           /* 11010111b : move to abort mode, disabled interrupts */
                                     /* 
                                      * SUPERVISOR STACK:
@@ -114,9 +118,6 @@ void __attribute__((naked)) prefetch_abort_handler(void)
                                      *  pc = fault_address
                                      *  original spsr
                                      */
-
-    "mov r0, %[event]\n"            /* r0 = EVENT_BREAKPOINT */
-    "sub r1, lr, #4\n"              /* r1 = fault_address */
     "mrs r2, spsr\n" 
     "tst r2, %[thumb_flag]\n"       /* interrupt occured in thumb state ? */
     "addne lr, pc, #9\n"            /* lr = .xfer_to_dbg_handler_thumb */
@@ -164,6 +165,10 @@ void __attribute__((naked)) data_abort_handler(void)
     "msr cpsr_c, %[svc_mode]\n"           /* 11010011b : move to supervisor mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store r0 */
     "stmfd sp!, {r1}\n"             /* store spsr, return frame complete */
+    
+    "mov r0, %[event]\n"            /* r0 = EVENT_MEMORY_FAULT */
+    "mov r1, sp\n"                  /* r1 = saved context */
+
     "msr cpsr_c, %[abort_mode]\n"           /* 11010111b : move to abort mode, disabled interrupts */
                                     /* 
                                      * SUPERVISOR STACK:
@@ -172,9 +177,6 @@ void __attribute__((naked)) data_abort_handler(void)
                                      *  pc = fault_address
                                      *  original spsr
                                      */
-
-    "mov r0, %[event]\n"            /* r0 = EVENT_MEMORY_FAULT */
-    "sub r1, lr, #8\n"              /* r1 = fault_address */
     "mrs r2, spsr\n" 
     "tst r2, %[thumb_flag]\n"       /* interrupt occured in thumb state ? */
     "addne lr, pc, #9\n"            /* lr = .xfer_to_dbg_handler_thumb */
@@ -225,6 +227,10 @@ void __attribute__((naked)) undefined_instruction_handler(void)
     "msr cpsr_c, %[svc_mode]\n"           /* 11010011b : move to supervisor mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store r0 */
     "stmfd sp!, {r1}\n"             /* store spsr, return frame complete */
+
+    "mov r0, %[event]\n"            /* r0 = EVENT_ILLEGAL_INSTRUCTION */
+    "mov r1, sp\n"                  /* r1 = saved context */
+
     "msr cpsr_c, %[undef_mode]\n"           /* 11010111b : move to undefined mode, disabled interrupts */
                                     /* 
                                      * SUPERVISOR STACK:
@@ -234,8 +240,6 @@ void __attribute__((naked)) undefined_instruction_handler(void)
                                      *  original spsr
                                      */
 
-    "mov r0, %[event]\n"            /* r0 = EVENT_ILLEGAL_INSTRUCTION */
-    "sub r1, lr, #4\n"              /* r1 = fault_address */
     "mrs r2, spsr\n" 
     "tst r2, %[thumb_flag]\n"       /* interrupt occured in thumb state ? */
     "addne lr, pc, #9\n"            /* lr = .xfer_to_dbg_handler_thumb */

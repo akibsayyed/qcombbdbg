@@ -317,9 +317,9 @@ class DiagTaskClient
       loop do
         begin
           unless @asynchronous
-            log 'Stopping async'
+            #log 'Stopping async'
             Thread.stop
-            log 'Resuming async'
+            #log 'Resuming async'
             next
           end
 

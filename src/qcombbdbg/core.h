@@ -184,13 +184,13 @@ typedef struct __attribute__((packed)) _breakpoint
         unsigned int size;
         char * bytecode;
       } condition;
-    } tracepoint;
+    } trace;
 
     struct {
       char access;
       unsigned int start;
       unsigned int end;
-    } watchpoint;
+    } watch;
   };
 } breakpoint;
 

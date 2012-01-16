@@ -604,13 +604,13 @@ class GdbProxy
         send_packet('OK')
 
       when /^T(.*)/
-        id = $1.hex
-        state = dbg_get_task_state(id)
-        if state != TaskState::DEAD
+        #id = $1.hex
+        #state = dbg_get_task_state(id)
+        #if state != TaskState::DEAD
           send_packet('OK')
-        else
-          send_packet('E00')
-        end
+        #else
+        #  send_packet('E00')
+        #end
 
       when /^m(.+),(.+)/
         data = dbg_read_memory($1.hex, $2.hex)
