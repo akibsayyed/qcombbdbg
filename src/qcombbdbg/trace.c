@@ -128,6 +128,9 @@ unsigned int trace_entry_get_size(trace_entry * tentry)
     case TRACE_ENTRY_VAR:
       size = sizeof(trace_variable_entry);
       break;
+
+    default:
+      size = 0;
   }
 
   return size;
@@ -296,7 +299,6 @@ trace_frame * trace_buffer_create_frame(unsigned short tp_id)
  */
 void trace_buffer_clear(void)
 {
-  int f, e;
   trace_frame * curr_frame, * tframe;
   trace_entry * curr_entry, * tentry;
 
@@ -445,9 +447,7 @@ void trace_op_rshu(void)
 
 void trace_op_trace_quick(int size)
 {
-  int stop;
   void * addr;
-
   addr = (void *)POP.i;
   
   trace_buffer_trace_memory(addr, size);
@@ -680,10 +680,10 @@ trace_vm_opcode_handler trace_vm_opcode_table[TRACE_OPCODE_NR + 1] =
   [OP_ADD] = trace_op_add,
   [OP_SUB] = trace_op_sub,
   [OP_MUL] = trace_op_mul,
-  [OP_DIVS] = trace_op_not_implemented, //trace_op_divs,
-  [OP_DIVU] = trace_op_not_implemented, //trace_op_divu,
-  [OP_REMS] = trace_op_not_implemented, //trace_op_rems, 
-  [OP_REMU] = trace_op_not_implemented, //trace_op_remu, 
+  [OP_DIVS] = trace_op_divs,
+  [OP_DIVU] = trace_op_divu,
+  [OP_REMS] = trace_op_rems, 
+  [OP_REMU] = trace_op_remu, 
   [OP_LSH] = trace_op_lsh,
   [OP_RSHS] = trace_op_rshs,
   [OP_RSHU] = trace_op_rshu,
@@ -732,7 +732,7 @@ trace_vm_opcode_handler trace_vm_opcode_table[TRACE_OPCODE_NR + 1] =
 int trace_vm_exec(char * bytecode, unsigned int size, context * arm_ctx)
 {
   int arg;
-  char opcode;
+  unsigned char opcode;
 
   tengine.vm.base_address = tengine.vm.pc = bytecode;
   tengine.vm.arm_ctx = arm_ctx;

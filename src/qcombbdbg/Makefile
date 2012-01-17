@@ -9,7 +9,7 @@ OBJECTS=$(SOURCES:.c=.o)
 MODEL=2.5.23Hd
 
 LDSCRIPT=devices/qcombbdbg-$(MODEL).script
-CFLAGS=-DDEBUG -g -Os -mcpu=arm926ej-s -Wno-unused-function -static -nostdlib -nodefaultlibs -fno-common -fno-strict-aliasing -mthumb -mthumb-interwork -fno-toplevel-reorder  #-fno-inline
+CFLAGS=-Wall -DDEBUG -g -Os -mcpu=arm926ej-s -Wno-unused-function -static -nostdlib -nodefaultlibs -fno-common -fno-strict-aliasing -mthumb -mthumb-interwork -fno-toplevel-reorder  #-fno-inline
 LDFLAGS=-Bstatic -x -X -Map $(TARGET).map #--gc-sections
 
 all: $(OBJECTS) link

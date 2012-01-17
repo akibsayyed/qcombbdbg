@@ -382,8 +382,6 @@ void dbg_write_insn(void * addr, char kind, int insn)
  */
 void dbg_insert_bkpt_insn(void * addr, char kind)
 {
-  int prot;
-
   if ( kind == ARM_CODE )
     dbg_write_insn(addr, kind, ARM_BKPT);
   else
@@ -488,7 +486,6 @@ void dbg_disable_tracepoint(breakpoint * tp)
 int dbg_remove_breakpoint(void * addr)
 {
   breakpoint * bp;
-  int prot;
 
   bp = get_breakpoint_at_address(addr);
   if ( !bp )
@@ -510,7 +507,6 @@ void dbg_remove_all_breakpoints(void)
 {
   breakpoint * bp;
   breakpoint * current;
-  int prot;
 
   bp = bps;
   while ( bp )

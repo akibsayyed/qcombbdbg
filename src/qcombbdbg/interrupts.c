@@ -29,40 +29,50 @@
 interrupt_vector_table * ivt = 0;
 interrupt_vector_table original_ivt;
 
-#define ARM_ASSEMBLY(code) \
-  asm( \
+#define ARM_ASSEMBLY(arm, ...) \
+  __asm__ __volatile__( \
+    ".align 2\n" \
     "bx pc\n" \
     "nop\n" \
     ".arm\n" \
     ".code 32\n" \
-    code \
+    arm \
+    "add r12, pc, #1\n" \
+    "bx r12\n" \
+    ".thumb\n" \
+    ".code 16" \
+    __VA_ARGS__ \
   ) \
 
 /*
  *  Disables IRQ and FIQ interrupts.
  */
-void __attribute__((naked)) cpu_interrupts_disable(void)
+void cpu_interrupts_disable(void)
 {
+  unsigned int tmp_reg;
+
   ARM_ASSEMBLY(
-    "mrs r0, cpsr\n"
-    "orr r0, r0, %[mask_int]\n"
-    "msr cpsr_c, r0\n"
-    "bx lr\n"
-    :: [mask_int] "i" (ARM_SPR_MASK_INTS)
+    "mrs %0, cpsr\n"
+    "orr %0, %0, %[mask_int]\n"
+    "msr cpsr_c, %0\n",
+    : "=r" (tmp_reg)
+    : [mask_int] "i" (ARM_SPR_MASK_INTS)
   );
 }
 
 /*
  *  Enables IRQ and FIQ interrupts.
  */
-void __attribute__((naked)) cpu_interrupts_enable(void)
+void cpu_interrupts_enable(void)
 {
+  unsigned int tmp_reg;
+
   ARM_ASSEMBLY(
-    "mrs r0, cpsr\n"
-    "bic r0, r0, %[mask_int]\n"
-    "msr cpsr_c, r0\n"
-    "bx lr\n"
-    :: [mask_int] "i" (ARM_SPR_MASK_INTS)
+    "mrs %0, cpsr\n"
+    "bic %0, %0, %[mask_int]\n"
+    "msr cpsr_c, %0\n",
+    : "=r" (tmp_reg)
+    : [mask_int] "i" (ARM_SPR_MASK_INTS)
   );
 }
 
@@ -71,19 +81,15 @@ void __attribute__((naked)) cpu_interrupts_enable(void)
  */
 void __attribute__((naked)) restore_context(void)
 {
-  asm (
-    "bx pc\n"
-    "nop\n"
-    ".arm\n"
-    ".code 32\n"
+  ARM_ASSEMBLY(
     "ldmfd sp!, {r12}\n"
-    "tst r12, %[thumb_flag]\n"      /* return to thumb state ? */
+    "tst r12, %[thumb_flag]\n"        /* return to thumb state ? */
     "ldrne lr, [sp, #56]\n"
-    "orrne lr, lr, #1\n"            /* set return address as thumb */
+    "orrne lr, lr, #1\n"              /* set return address as thumb */
     "strne lr, [sp, #56]\n"
     "bic r12, r12, %[thumb_flag]\n"
-    "msr cpsr, r12\n"               /* restore cpsr */ 
-    "ldmfd sp!, {r0-r12, lr, pc}\n" /* return to original context */
+    "msr cpsr, r12\n"                 /* restore cpsr */ 
+    "ldmfd sp!, {r0-r12, lr, pc}\n",  /* return to original context */
     ::
     [thumb_flag] "i" (ARM_SPR_THUMB)
   );
@@ -91,7 +97,7 @@ void __attribute__((naked)) restore_context(void)
 
 void __attribute__((naked)) prefetch_abort_handler(void)
 {
-  asm(
+  ARM_ASSEMBLY(
     ".arm\n"
     ".code 32\n"
     "stmfd sp!, {r0}\n"             /* save r0 on abort stack */
@@ -137,7 +143,7 @@ void __attribute__((naked)) prefetch_abort_handler(void)
     "bic r12, r12, %[mask_ints]\n"
     "msr cpsr, r12\n"               /* enable interrupts */
     "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_BREAKPOINT, fault_address) */
-    "blx restore_context\n" 
+    "blx restore_context\n",
 
     :: 
     [svc_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_SVC),
@@ -150,7 +156,7 @@ void __attribute__((naked)) prefetch_abort_handler(void)
 
 void __attribute__((naked)) data_abort_handler(void)
 {
-  asm(
+  ARM_ASSEMBLY(
     ".arm\n"
     ".code 32\n"
     "stmfd sp!, {r0}\n"             /* save r0 on abort stack */
@@ -196,7 +202,7 @@ void __attribute__((naked)) data_abort_handler(void)
     "bic r12, r12, %[mask_ints]\n"
     "msr cpsr, r12\n"               /* enable interrupts */
     "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_MEMORY_FAULT, fault_address) */
-    "blx restore_context\n" 
+    "blx restore_context\n",
 
     :: 
     [svc_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_SVC),
@@ -209,7 +215,7 @@ void __attribute__((naked)) data_abort_handler(void)
 
 void __attribute__((naked)) undefined_instruction_handler(void)
 {
-  asm(
+  ARM_ASSEMBLY(
     ".arm\n"
     ".code 32\n"
     "stmfd sp!, {r0}\n"             /* save r0 on abort stack */
@@ -259,7 +265,7 @@ void __attribute__((naked)) undefined_instruction_handler(void)
     "bic r12, r12, %[mask_ints]\n"
     "msr cpsr, r12\n"               /* enable interrupts */
     "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_ILLEGAL_INSTRUCTION, fault_address) */
-    "blx restore_context\n" 
+    "blx restore_context\n",
 
     :: 
     [svc_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_SVC),

@@ -24,113 +24,135 @@
 
 #include "mmu.h"
 
-#define ARM_ASSEMBLY(code) \
-  asm( \
+#define ARM_ASSEMBLY(arm, ...) \
+  __asm__ __volatile__ ( \
+    ".align 2\n" \
     "bx pc\n" \
     "nop\n" \
     ".arm\n" \
     ".code 32\n" \
-    code \
+    arm \
+    "add r12, pc, #1\n" \
+    "bx r12\n" \
+    ".thumb\n" \
+    ".code 16" \
+    __VA_ARGS__ \
   ) \
 
 /*
  *  Get ARM processor identification information.
  */
-cpu_id_register __attribute__((naked)) cpuid(void)
+cpu_id_register cpuid(void)
 {
+  cpu_id_register reg;
+
   ARM_ASSEMBLY(
-    "mrc p15, 0, r0, c0, c0, 0\n"
-    "bx lr\n"
+    "mrc p15, 0, %0, c0, c0, 0\n",
+    : "=r" (reg.i)
   );
+
+  return reg;
 }
 
 /*
  *  Retrieves page translation table base register (TTBR0).
  */
-mmu_page_table __attribute__((naked)) mmu_get_translation_table(void)
+mmu_page_table mmu_get_translation_table(void)
 {
+  mmu_page_table pt;
+
   ARM_ASSEMBLY(
-    "mrc p15, 0, r0, c2, c0, 0\n" /* assume we use TTBR0 here */
-    "lsr r0, r0, #14\n"
-    "lsl r0, r0, #14\n"
-    "bx lr\n"
+    "mrc p15, 0, %0, c2, c0, 0\n" /* assume we use TTBR0 here */
+    "lsr %0, %0, #14\n"
+    "lsl %0, %0, #14\n",
+    : "=r" (pt)
   );
+
+  return pt;
 }
 
 /*
  *  Retrieves MMU cache type register.
  */
-unsigned int __attribute__((naked)) mmu_get_cache_type_register(void)
+unsigned int mmu_get_cache_type_register(void)
 {
+  unsigned int cache_type;
+
   ARM_ASSEMBLY(
-    "mrc p15, 0, r0, c0, c0, 1\n"
-    "bx lr\n"
+    "mrc p15, 0, %0, c0, c0, 1\n",
+    : "=r" (cache_type)
   );
+
+  return cache_type;
 }
 
 /*
  *  Retrieves MMU control register.
  */
-unsigned int __attribute__((naked)) mmu_get_control_register(void)
+unsigned int mmu_get_control_register(void)
 {
+  unsigned int mmu_ctrl;
+
   ARM_ASSEMBLY(
-    "mrc p15, 0, r0, c1, c0, 0\n"
-    "bx lr\n"
+    "mrc p15, 0, %0, c1, c0, 0\n",
+    : "=r" (mmu_ctrl)
   );
+
+  return mmu_ctrl;
 }
 
 /*
  *  Invalidates a single instruction TLB entry.
  */
-void __attribute__((naked)) mmu_invalidate_insn_tlb_entry(void * addr)
+void mmu_invalidate_insn_tlb_entry(void * addr)
 {
   ARM_ASSEMBLY(
-    "mcr p15, 0, r0, c8, c5, 1\n"
-    "bx lr\n"
+    "mcr p15, 0, %0, c8, c5, 1\n",
+    :: "r" (addr)
   );
 }
 
 /*
  *  Invalidates a single data TLB entry.
  */
-void __attribute__((naked)) mmu_invalidate_data_tlb_entry(void * addr)
+void mmu_invalidate_data_tlb_entry(void * addr)
 {
   ARM_ASSEMBLY(
-    "mcr p15, 0, r0, c8, c6, 1\n"
-    "bx lr\n"
+    "mcr p15, 0, %0, c8, c6, 1\n",
+    :: "r" (addr)
   );
 }
 
 /*
  *  Invalidates a single unified TLB entry.
  */
-void __attribute__((naked)) mmu_invalidate_unified_tlb_entry(void * addr)
+void mmu_invalidate_unified_tlb_entry(void * addr)
 {
   ARM_ASSEMBLY(
-    "mcr p15, 0, r0, c8, c7, 1\n"
-    "bx lr\n"
+    "mcr p15, 0, %0, c8, c7, 1\n",
+    :: "r" (addr)
   );
 }
 
 /*
  *  Invalidates a single line in the instruction cache.
  */
-void __attribute__((naked)) mmu_invalidate_insn_cache_line(void * addr)
+void mmu_invalidate_insn_cache_line(void * addr)
 {
   ARM_ASSEMBLY(
-    "mcr p15, 0, r0, c7, c5, 1\n"
-    "bx lr\n"
+    "mcr p15, 0, %0, c7, c5, 1\n",
+    :: "r" (addr)
   );
 }
 
 /*
  *  Cleans a single line in the data cache (commits cache to memory).
  */
-void __attribute__((naked)) mmu_clean_data_cache_line(void * addr)
+void mmu_clean_data_cache_line(void * addr)
 {
   ARM_ASSEMBLY(
-    "mcr p15, 0, r0, c7, c10, 1\n"
-    "bx lr\n"
+    "mcr p15, 0, %0, c7, c10, 1\n",
+    :: "r" (addr)
   );
 }
 
@@ -174,40 +196,39 @@ void mmu_sync_insn_cache_at(void * addr)
 /*
  *  Invalidates entire TLB.
  */
-void __attribute__((naked)) mmu_invalidate_tlb(void)
+void mmu_invalidate_tlb(void)
 {
+  unsigned int flush_value = 0;
+
   ARM_ASSEMBLY(
-    "mov r0, #0\n"
-    "mcr p15, 0, r0, c8, c7, 0\n"
-    "bx lr\n"
+    "mcr p15, 0, %0, c8, c7, 0\n",
+    :: "r" (flush_value)
   );
 }
 
 /*
  *  Enables the memory management unit.
  */
-void __attribute__((naked)) mmu_enable(void)
+void mmu_enable(void)
 {
-  asm(
-    "bx pc\n"
-    "nop\n"
-    ".arm\n"
-    ".code 32\n"
-    "mrc p15, 0, r0, c1, c0, 0\n"
-    "orr r0, r0, %[rom_protect_flag]\n"
-    "mcr p15, 0, r0, c1, c0, 0\n"
-    "mov r0, #0\n"
-    "mcr p15, 0, r0, c7, c7, 0\n" /* invalidate L1 cache */
-    //"mcr p15, 0, r0, c8, c7, 0\n" /* invalidate TLB */
-    "mrc p15, 0, r0, c1, c0, 0\n"
-    "orr r0, r0, %[mmu_flag]\n"
-    "mcr p15, 0, r0, c1, c0, 0\n"
-    "mrc p15, 0, r0, c1, c0, 0\n"
-    "orr r0, r0, %[L1_insn_flag]\n"
-    "orr r0, r0, %[L1_data_flag]\n"
-    "mcr p15, 0, r0, c1, c0, 0\n"
-    "bx lr\n" 
-    :: [rom_protect_flag] "i" (MMU_CONTROL_ROM_PROTECT),
+  unsigned int tmp_reg;
+
+  ARM_ASSEMBLY(
+    "mrc p15, 0, %0, c1, c0, 0\n"
+    "orr %0, %0, %[rom_protect_flag]\n"
+    "mcr p15, 0, %0, c1, c0, 0\n"
+    "mov %0, #0\n"
+    "mcr p15, 0, %0, c7, c7, 0\n" /* invalidate L1 cache */
+    //"mcr p15, 0, %0, c8, c7, 0\n" /* invalidate TLB */
+    "mrc p15, 0, %0, c1, c0, 0\n"
+    "orr %0, %0, %[mmu_flag]\n"
+    "mcr p15, 0, %0, c1, c0, 0\n"
+    "mrc p15, 0, %0, c1, c0, 0\n"
+    "orr %0, %0, %[L1_insn_flag]\n"
+    "orr %0, %0, %[L1_data_flag]\n"
+    "mcr p15, 0, %0, c1, c0, 0\n",
+    : "=r" (tmp_reg)
+    : [rom_protect_flag] "i" (MMU_CONTROL_ROM_PROTECT),
        [mmu_flag] "i" (MMU_CONTROL_ENABLE),
        [L1_insn_flag] "i" (MMU_CONTROL_L1_INSTRUCTION_CACHE_ENABLE),
        [L1_data_flag] "i" (MMU_CONTROL_L1_DATA_CACHE_ENABLE)
@@ -217,22 +238,19 @@ void __attribute__((naked)) mmu_enable(void)
 /*
  *  Disables the memory management unit.
  */
-void __attribute__((naked)) mmu_disable(void)
+void mmu_disable(void)
 {
-  asm(
-    "bx pc\n"
-    "nop\n"
-    ".arm\n"
-    ".code 32\n"
-    "mov r0, %[disable_mmu_control]\n"
-    "mcr p15, 0, r0, c1, c0, 0\n"
-    "mrc p15, 0, r0, c1, c0, 0\n"
-    "orr r0, r0, %[L1_insn_flag]\n"
-    "mcr p15, 0, r0, c1, c0, 0\n"
-    "bx lr\n"
-    ::
-    [disable_mmu_control] "i" (MMU_CONTROL_WRITE_BUFFER),
-    [L1_insn_flag] "i" (MMU_CONTROL_L1_INSTRUCTION_CACHE_ENABLE)
+  unsigned int tmp_reg;
+
+  ARM_ASSEMBLY(
+    "mov %0, %[disable_mmu_control]\n"
+    "mcr p15, 0, %0, c1, c0, 0\n"
+    "mrc p15, 0, %0, c1, c0, 0\n"
+    "orr %0, %0, %[L1_insn_flag]\n"
+    "mcr p15, 0, %0, c1, c0, 0\n",
+    : "=r" (tmp_reg)
+    : [disable_mmu_control] "i" (MMU_CONTROL_WRITE_BUFFER),
+      [L1_insn_flag] "i" (MMU_CONTROL_L1_INSTRUCTION_CACHE_ENABLE)
   );
 }
 

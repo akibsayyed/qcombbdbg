@@ -21,14 +21,19 @@
 #ifndef __MMU_H
 #define __MMU_H
 
-typedef struct __attribute__((packed))
+typedef union 
 {
-  unsigned int revision : 4;
-  unsigned int reserved : 8;
-  unsigned int primary : 4;
-  unsigned int arch : 4;
-  unsigned int variant : 4;
-  unsigned int implementor : 8;
+  unsigned int i;
+
+  struct __attribute__((packed))
+  {
+    unsigned int revision : 4;
+    unsigned int reserved : 8;
+    unsigned int primary : 4;
+    unsigned int arch : 4;
+    unsigned int variant : 4;
+    unsigned int implementor : 8;
+  } bits;
 } cpu_id_register;
 
 #define MMU_PAGE_SECTION_SHIFT 20
