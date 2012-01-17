@@ -23,7 +23,8 @@
 
 #include "rex.h"
 
-register char * stack asm("sp");
+#define DBG_HEAP_BASE_ADDR 0x1e00000
+#define DBG_HEAP_SIZE 0x100000
 
 /* Hooked command from the diagnostic task */
 #define DBG_CMD 0x7b
@@ -136,8 +137,10 @@ enum exception_type
   EXCEPTION_DATA_ABORT
 };
 
+#define __packed __attribute__((packed))
+
 /* Debug structures */
-typedef struct __attribute__((packed)) _saved_context
+typedef struct __packed _saved_context
 {
   int spsr;
   int r0;
@@ -157,13 +160,13 @@ typedef struct __attribute__((packed)) _saved_context
   int pc;
 } saved_context;
 
-typedef struct __attribute__((packed))
+typedef struct __packed
 {
   saved_context saved_ctx;
   int sp;
 } context;
 
-typedef struct __attribute__((packed)) _breakpoint
+typedef struct __packed _breakpoint
 {
   struct _breakpoint * next;
   struct _breakpoint * prev;
@@ -174,19 +177,19 @@ typedef struct __attribute__((packed)) _breakpoint
   void * relocated_address;
   int original_insn;
 
-  union {
-    struct {
+  union __packed {
+    struct __packed {
       char enabled;
       int hits;
       int pass;
 
-      struct {
+      struct __packed {
         unsigned int size;
         char * bytecode;
       } condition;
     } trace;
 
-    struct {
+    struct __packed {
       char access;
       unsigned int start;
       unsigned int end;
@@ -213,31 +216,31 @@ typedef struct __attribute__((packed, aligned(4)))
 {
   char hooked_cmd; // DBG_CMD
   char cmd_type;
-  union 
+  union __packed
   {
     task_id tid;
 
-    struct {
+    struct __packed {
       void * base;
       unsigned int size;
     } read;
     
-    struct {
+    struct __packed {
       void * dest;
       char data[1];
     } write;
 
-    struct {
+    struct __packed {
       task_id tid;
       context ctx;
     } set_regs;
 
-    struct {
+    struct __packed {
       void * address;
       char kind;
     } breakpoint;
 
-    struct {
+    struct __packed {
       long long int (* f)(int, int, int, int);
       int arg1;
       int arg2;
@@ -245,27 +248,27 @@ typedef struct __attribute__((packed, aligned(4)))
       int arg4;
     } call;
 
-    struct {
+    struct __packed {
       task_id tid;
       int exception;
     } exception;
 
-    struct {
+    struct __packed {
       task_id tid;
       char data[1];
     } overflow;
 
-    struct {
+    struct __packed {
       task_id tid;
       int sigs;
     } signal;
 
-    struct {
+    struct __packed {
       void * src;
       void * dst;
     } reloc;
 
-    struct __attribute__((packed)) {
+    struct __packed {
       unsigned short id;
       int value;
     } tvar;
@@ -277,7 +280,7 @@ typedef struct __attribute__((packed, aligned(4)))
   char type;
   char error_code;
 
-  union 
+  union __packed
   {
     int num_tasks;
     int task_state;
@@ -287,17 +290,17 @@ typedef struct __attribute__((packed, aligned(4)))
 
     context ctx;
 
-    struct {
+    struct __packed {
       int wait_signals;
       int active_signals;
       char name[1];
     } task_info;
 
-    struct {
+    struct __packed {
       long long int result;
     } call;
 
-    struct __attribute__((packed)) {
+    struct __packed {
       char status;
       char circular;
       unsigned int tframes;

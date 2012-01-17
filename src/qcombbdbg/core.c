@@ -29,6 +29,7 @@
 #include "trace.h"
 #include "relocator.h"
 
+
 int initialized = 0;
 breakpoint * bps = 0;
 task_list tlist;
@@ -44,14 +45,36 @@ extern trace_engine tengine;
  */
 char __scratch_buffer[128];
 
-#define DBG_HEAP_BASE_ADDR 0x1e00000
-#define DBG_HEAP_SIZE 0x100000
-
 #define CHECK_INITIALIZED \
   if (!initialized) return 0;
 
 #define foreach_breakpoint(var) for ( var = bps; var != 0; var = var->next )
 #define TASK_INFO(tid) tlist.tasks[tid - 1]
+
+/*
+ *  Returns the current stack pointer.
+ */
+static inline char * get_sp(void)
+{
+  char * sp;
+
+  asm volatile(
+    "mov %0, sp\n"
+    : "=r" (sp)
+  );
+  return sp;
+}
+
+/*
+ *  Sets the current stack pointer.
+ */
+static inline void set_sp(char * sp)
+{
+  asm volatile(
+    "mov sp, %0\n"
+    :: "r" (sp)
+  );
+}
 
 static inline void * memmove_inline(void * dst, void * src, unsigned int size)
 {
@@ -663,13 +686,14 @@ void dbg_do_break(int event, saved_context * saved_ctx)
 /*
  *  Callback routine handling all break events.
  */
-void __attribute__((naked)) dbg_break_handler(int event, saved_context * saved_ctx)
+void dbg_break_handler(int event, saved_context * saved_ctx)
 {
   task_id current_tid;
   breakpoint * bp;
-  int saved_sp;
+  int saved_sp, sp_delta, frame_size;
+  char * current_sp;
 
-  asm volatile ("mov r8, lr");
+  current_sp = get_sp();
 
   /* A prefetch abort interrupt occurred */
   if ( event == EVENT_BREAKPOINT )
@@ -694,44 +718,23 @@ void __attribute__((naked)) dbg_break_handler(int event, saved_context * saved_c
    */
   dbg_do_break(event, saved_ctx);
 
+  current_tid = get_current_task_id();
+
   /* 
    * $sp might have been modified while the task was halted 
    * We need to adjust it so that we return properly.
    */
-  current_tid = get_current_task_id();
-
-  if ( saved_sp != TASK_INFO(current_tid).saved_sp )
-    switch ( event ) 
-    {
-      case EVENT_STOP:
-        /* 
-         * We have to account for the return to rex_execute_apc().
-         * Duplicate the stack frame {r3-r7, lr}
-         */
-        memmove_inline(
-          (char *) TASK_INFO(current_tid).saved_sp - REX_EXECUTE_APC_STACK_SIZE - sizeof(saved_context),
-          (char *) saved_ctx - REX_EXECUTE_APC_STACK_SIZE, 
-          REX_EXECUTE_APC_STACK_SIZE + sizeof(saved_context)
-        );
-        
-        stack = (char *) TASK_INFO(current_tid).saved_sp - REX_EXECUTE_APC_STACK_SIZE - sizeof(saved_context);
-
-        break;
-      
-      default:
-        memmove_inline(
-          (char *) TASK_INFO(current_tid).saved_sp - sizeof(saved_context),
-          (char *) saved_ctx,
-          sizeof(saved_context)
-        );
-
-        stack = (char *) TASK_INFO(current_tid).saved_sp - sizeof(saved_context);
-
-        break;
-    }
-
-  /* Return to context */
-  asm volatile ("bx r8");
+  sp_delta = TASK_INFO(current_tid).saved_sp - saved_sp;
+  if ( sp_delta )
+  {
+    frame_size = (char *) saved_sp - current_sp; /* Includes current stack frames + task context */
+    memmove_inline(
+      (char *) TASK_INFO(current_tid).saved_sp - frame_size,
+      current_sp,
+      frame_size
+    );
+    set_sp(current_sp + sp_delta);
+  }
 }
 
 /*
