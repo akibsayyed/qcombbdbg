@@ -120,8 +120,8 @@ extern void __memmove(void *, void *, int);
 extern void __memset(void *, char, int);
 extern char * __strcpy(char *, const char *);
 
-extern unsigned long long int __idivsi3(int, int);
-extern unsigned long long int __udivsi3(unsigned int, unsigned int);
+extern unsigned long long int __aeabi_idivmod(int, int);
+extern unsigned long long int __aeabi_uidivmod(unsigned int, unsigned int);
 
 extern rex_task * rex_self(void);
 extern void rex_find_best_task(rex_task *);

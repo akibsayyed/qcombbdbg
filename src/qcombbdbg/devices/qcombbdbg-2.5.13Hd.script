@@ -25,8 +25,8 @@ SECTIONS
   PROVIDE(__memmove = 0x139234);
   PROVIDE(__memset = 0x1392d8);
   PROVIDE(__strcpy = 0x1396b0 | 1);
-  PROVIDE(__idivsi3 = 0x1392f0);
-  PROVIDE(__udivsi3 = 0x1393c8);
+  PROVIDE(__aeabi_idivmod = 0x1392f0);
+  PROVIDE(__aeabi_uidivmod = 0x1393c8);
 
   /* REX core functions, necessary */
   PROVIDE(rex_self = 0x1375dc | 1);

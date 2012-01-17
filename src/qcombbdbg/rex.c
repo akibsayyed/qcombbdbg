@@ -114,35 +114,45 @@ void __attribute((naked)) __far_call(void)
  * eabi soft arithmetic divisions
  * needed by gcc
  */
-int __aeabi_idiv(int a, int b)
+int __divsi3(int a, int b)
 {
   unsigned long long int result;
   
-  result = __idivsi3(a, b);
+  result = __aeabi_idivmod(a, b);
   return result & 0xffffffff;
 }
 
-int __aeabi_idivmod(int a, int b)
+int __aeabi_idiv(int a, int b)
+{
+  return __divsi3(a, b);
+}
+
+int __modsi3(int a, int b)
 {
   unsigned long long int result;
   
-  result = __idivsi3(a, b);
+  result = __aeabi_idivmod(a, b);
   return result >> 32;
+}
+
+int __udivsi3(unsigned int a, unsigned int b)
+{
+  unsigned long long int result;
+  
+  result = __aeabi_uidivmod(a, b);
+  return result & 0xffffffff;
 }
 
 int __aeabi_uidiv(unsigned int a, unsigned int b)
 {
-  unsigned long long int result;
-  
-  result = __udivsi3(a, b);
-  return result & 0xffffffff;
+  return __udivsi3(a, b);
 }
 
-int __aeabi_uidivmod(unsigned int a, unsigned int b)
+int __umodsi3(unsigned int a, unsigned int b)
 {
   unsigned long long int result;
   
-  result = __udivsi3(a, b);
+  result = __aeabi_uidivmod(a, b);
   return result >> 32;
 }
 

@@ -693,47 +693,48 @@ void dbg_break_handler(int event, saved_context * saved_ctx)
   int saved_sp, sp_delta, frame_size;
   char * current_sp;
 
-  current_sp = get_sp();
+  /* Transfer control to tracepoint handler if we hit a tracepoint */
+  if ( event == EVENT_BREAKPOINT && (bp = get_tracepoint_at_address((void *)saved_ctx->pc)) )
+    dbg_trace_handler(bp, saved_ctx);
 
-  /* A prefetch abort interrupt occurred */
-  if ( event == EVENT_BREAKPOINT )
+  /* Handle the break event */
+  else
   {
-    bp = get_tracepoint_at_address((void *)saved_ctx->pc);
+    current_sp = get_sp();
 
-    /* Transfer control to the tracepoint handler */ 
-    if ( bp )
-      dbg_trace_handler(bp, saved_ctx);
+    /* A prefetch abort interrupt occurred */
+    if ( event == EVENT_BREAKPOINT )
+    {
+      /* Check if a breakpoint has been defined at the exception address */
+      bp = get_breakpoint_at_address((void *)saved_ctx->pc);
+      if ( !bp )
+        event = EVENT_MEMORY_FAULT;
+    }
 
-    /* Check if a breakpoint has been defined at the exception address */
-    bp = get_breakpoint_at_address((void *)saved_ctx->pc);
-    if ( !bp )
-      event = EVENT_MEMORY_FAULT;
-  }
+    /* Save the original stack pointer before breaking */
+    saved_sp = (int)(saved_ctx + 1);
 
-  /* Save the original stack pointer before break */
-  saved_sp = (int)(saved_ctx + 1);
+    /*
+     *  Interrupts the current task.
+     */
+    dbg_do_break(event, saved_ctx);
 
-  /*
-   *  Interrupts the current task.
-   */
-  dbg_do_break(event, saved_ctx);
-
-  current_tid = get_current_task_id();
-
-  /* 
-   * $sp might have been modified while the task was halted 
-   * We need to adjust it so that we return properly.
-   */
-  sp_delta = TASK_INFO(current_tid).saved_sp - saved_sp;
-  if ( sp_delta )
-  {
-    frame_size = (char *) saved_sp - current_sp; /* Includes current stack frames + task context */
-    memmove_inline(
-      (char *) TASK_INFO(current_tid).saved_sp - frame_size,
-      current_sp,
-      frame_size
-    );
-    set_sp(current_sp + sp_delta);
+    /* 
+     * $sp might have been modified while the task was halted.
+     * We need to adjust it so that we return properly.
+     */
+    current_tid = get_current_task_id();
+    sp_delta = TASK_INFO(current_tid).saved_sp - saved_sp;
+    if ( sp_delta )
+    {
+      frame_size = (char *) saved_sp - current_sp; /* Includes active stack frames + task context */
+      memmove_inline(
+        (char *) TASK_INFO(current_tid).saved_sp - frame_size,
+        current_sp,
+        frame_size
+      );
+      set_sp(current_sp + sp_delta);
+    }
   }
 }
 

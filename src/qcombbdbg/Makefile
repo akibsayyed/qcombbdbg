@@ -9,14 +9,19 @@ OBJECTS=$(SOURCES:.c=.o)
 MODEL=2.5.23Hd
 
 LDSCRIPT=devices/qcombbdbg-$(MODEL).script
-CFLAGS=-Wall -DDEBUG -g -Os -mcpu=arm926ej-s -Wno-unused-function -static -nostdlib -nodefaultlibs -fno-common -fno-strict-aliasing -mthumb -mthumb-interwork -fno-toplevel-reorder  #-fno-inline
 LDFLAGS=-Bstatic -x -X -Map $(TARGET).map #--gc-sections
+
+ifneq (,$(findstring clang,$(CC)))
+CFLAGS=-cc1 -triple thumbv5-elf-eabi -S -disable-free -disable-llvm-verifier -static-define -mrelocation-model static -mdisable-fp-elim -target-abi aapcs -target-cpu arm926ej-s -msoft-float -mfloat-abi soft -target-feature +soft-float -target-feature +soft-float-abi -backend-option -arm-strict-align -momit-leaf-frame-pointer -g -Oz -ffreestanding -fno-builtin -fno-rtti -fno-common -x c
+else
+CFLAGS=-mabi=aapcs -Wall -DDEBUG -g -Os -mcpu=arm926ej-s -Wno-unused-function -static -nostdlib -nodefaultlibs -fno-common -fno-strict-aliasing -mthumb -mthumb-interwork -fno-toplevel-reorder  #-fno-inline
+endif
 
 all: $(OBJECTS) link
 
 %.o: %.c
 	$(CC) $(CFLAGS) -S $*.c -o $*.S
-	$(CC) $(CFLAGS) -c $*.c -o $@
+	$(AS) $*.S -o $@
 
 link:
 	$(LD) $(LDFLAGS) -T $(LDSCRIPT) $(OBJECTS) -o $(TARGET).elf
@@ -24,3 +29,4 @@ link:
 
 clean:
 	rm -f *.map *.o *.bin *.elf *.S
+
