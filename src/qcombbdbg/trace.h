@@ -21,6 +21,18 @@
 #ifndef __TRACE_H
 #define __TRACE_H
 
+#define DEFINE_GDB_SCRIPT(script_name) \
+  asm("\
+    .pushsection \".debug_gdb_scripts\", \"MS\",@progbits,1\n\
+    .byte 1\n\
+    .asciz \"" script_name "\"\n\
+    .popsection \n\
+    ");
+
+#define foreach_trace_frame(tf) for ( tf = tengine.tbuffer.frames; tf != 0; tf = tf->next )
+#define foreach_trace_entry(tf, te) for ( te = tf->entries; te != 0; te = te->next )
+#define foreach_trace_var(tv) for ( tv = tengine.tvars; tv != 0; tv = tv->next )
+
 #define TRACE_OPCODE_NR 0x33
 enum trace_vm_opcodes
 {
@@ -126,13 +138,13 @@ typedef union
 } trace_vm_opcode_handler;
 
 /* Registers entry */
-typedef struct
+typedef struct __attribute__((packed))
 {
   context ctx;
 } trace_registers_entry;
 
 /* Memory entry */
-typedef struct
+typedef struct __attribute__((packed))
 {
   void * address;
   unsigned short length;
@@ -140,7 +152,7 @@ typedef struct
 } trace_memory_entry;
 
 /* Trace variable entry */
-typedef struct
+typedef struct __attribute__((packed))
 {
   unsigned short id;
   int value;
@@ -152,18 +164,15 @@ typedef struct
  *    - A piece of memory
  *    - A saved trace variable value.
  */
-enum trace_entry_type
-{
-  TRACE_ENTRY_REGS,
-  TRACE_ENTRY_MEM,
-  TRACE_ENTRY_VAR
-};
+#define TRACE_ENTRY_REGS 'R'
+#define TRACE_ENTRY_MEM 'M'
+#define TRACE_ENTRY_VAR 'V'
 
 /*
  *  An entry in a trace frame.
  *  A trace frame can contain multiple entries.
  */
-typedef struct _trace_entry
+typedef struct __attribute__((packed)) _trace_entry
 {
   struct _trace_entry * next;
 
@@ -184,7 +193,7 @@ typedef struct _trace_frame
 {
   struct _trace_frame * next;
 
-  unsigned short tracepoint_id;
+  breakpoint *tp;
   unsigned int entry_count;
   trace_entry * entries;
 
@@ -254,10 +263,19 @@ typedef struct
   trace_vm_state vm;
   trace_variable * tvars; 
   trace_buffer tbuffer;
+  //rex_critical_section critical_section;
 } trace_engine;
 
 void trace_engine_init(void);
 void trace_buffer_clear(void);
+void trace_start(void);
+void trace_stop(char);
+unsigned int trace_frame_get_size(trace_frame *);
+unsigned int trace_entry_get_size(trace_entry *);
+trace_frame * trace_buffer_create_frame(breakpoint*);
+int trace_buffer_trace_registers(trace_frame *, saved_context *);
+int trace_buffer_trace_memory(trace_frame *, void *, unsigned short);
+
 trace_variable * trace_get_variable(unsigned short);
 void trace_set_variable(unsigned short, int);
 

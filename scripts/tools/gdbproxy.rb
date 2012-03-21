@@ -47,14 +47,20 @@ module Commands
   INSERT_BP = 11
   REMOVE_BP = 12
 
-  INSERT_TP = 13
-  REMOVE_TP = 14
-  TRACE_CLEAR = 15
-  TRACE_START = 16
-  TRACE_STOP = 17
-  TRACE_STATUS = 18
-  GET_TVAR = 19
-  SET_TVAR = 20
+  TRACE_CLEAR = 13
+  TRACE_START = 14
+  TRACE_STOP = 15
+  TRACE_STATUS = 16
+  GET_TVAR = 17
+  SET_TVAR = 18
+  INSERT_TP = 19
+  REMOVE_TP = 20
+  ENABLE_TP = 21
+  DISABLE_TP = 22
+  GET_TP_STATUS = 23
+  SET_TP_CONDITION = 24
+  ADD_TP_ACTION = 25
+  GET_TRACE_FRAME = 26
 
   DEBUG_ECHO = 0x80
   DEBUG_CALL = 0x81
@@ -69,6 +75,7 @@ module Event
   BKPT = 1
   MEMORY_FAULT = 2
   ILLEGAL_INSTRUCTION = 3
+  RESET = 4
 end
 
 module Exceptions
@@ -98,6 +105,7 @@ end
 module Signals
   ILL = 4
   TRAP = 5
+  ABRT = 6
   BUS = 7
   SEGV = 11
 end
@@ -113,14 +121,123 @@ module TraceStop
 end
 
 class Tracepoint
-  attr_reader :actions
+  module Actions
+    COLLECT_REGS = 0
+    COLLECT_MEM = 1
+    EXEC_GDB = 2
+  end
 
-  def initialize(n, addr, pass, condition)
-    @n = n
+  attr_reader :addr, :pass, :condition, :actions, :src
+
+  def initialize(addr, pass, condition = nil)
     @addr = addr
     @pass = pass
     @condition = condition
     @actions = []
+    @src = []
+  end
+end
+
+class TraceBuffer
+  attr_reader :frames
+  
+  class Frame
+    attr_reader :tp_num, :entries
+    def initialize(tp_num)
+      @tp_num = tp_num
+      @entries = []
+    end
+
+    def dump
+      data = ''
+      @entries.each do |entry|
+        data << entry.dump
+      end
+
+      [ @tp_num ].pack('S') + [ data.size ].pack('L') + data
+    end
+
+    def get_registers
+      @entries.find { |entry| entry.is_a? Registers }
+    end
+  end
+
+  class Registers < Array
+    def dump
+      self.compact.map{|r| [r].pack('V')}.join
+    end
+  end
+
+  class Memory
+    attr_reader :address, :data
+    def initialize(address, data)
+      @address = address
+      @data = data
+    end
+
+    def dump
+      [ @address ].pack('Q') + [ @data.size ].pack('S') + @data
+    end
+  end
+
+  class Variable
+    attr_reader :n, :value
+    def initialize(n, value)
+      @n = n
+      @value = value
+    end
+
+    def dump
+      [ @n ].pack('L') + [ @value ].pack('Q')
+    end
+  end
+
+  def initialize
+    @frames = []
+  end
+
+  def dump
+    buffer = ''
+    @frames.each do |frame|
+      buffer << frame.dump
+    end
+
+    buffer
+  end
+
+  def add_frame(tp_num, framebin)
+    frame = Frame.new(tp_num)
+
+    until framebin.empty?
+      entry =
+        case type = framebin.slice!(0,1)
+          when 'R'
+            cpsr,
+            r0, r1, r2, r3,
+            r4, r5, r6, r7,
+            r8, r9, r10, r11,
+            r12, lr, pc, sp = framebin.slice!(0, 17*4).unpack('V17')
+            Registers.new([ 
+              r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, sp, lr, pc, 
+              nil, nil, nil, nil, nil, nil, nil, nil, nil,
+              cpsr
+            ])
+
+          when 'M'
+            addr = framebin.slice!(0,4).unpack('V')[0]
+            size = framebin.slice!(0,2).unpack('v')[0]
+            data = framebin.slice!(0, size)
+            Memory.new(addr, data)
+          
+          when 'V'
+            id = framebin.slice!(0,2).unpack('v')[0]
+            value = framebin.slice!(0,4).unpack('V')[0]
+            Variable.new(id, value)
+        end
+      frame.entries << entry
+    end
+
+    @frames << frame
   end
 end
 
@@ -128,7 +245,8 @@ SIGMAP = Hash.new(0).update({
   Event::STOP => 0,
   Event::BKPT => Signals::TRAP,
   Event::MEMORY_FAULT => Signals::SEGV,
-  Event::ILLEGAL_INSTRUCTION => Signals::ILL
+  Event::ILLEGAL_INSTRUCTION => Signals::ILL,
+  Event::RESET => Signals::ABRT
 })
 
 DBG_CMD = 0x7b
@@ -168,6 +286,8 @@ class GdbProxy
       @events = []
       @event_reporting_in_progress = false
       @tracepoints = {}
+      @tracebuffer = TraceBuffer.new
+      @current_frame = nil
 
       loop do
         break unless @gdb and not @gdb.eof?
@@ -217,6 +337,11 @@ class GdbProxy
         end
       end
     end
+  end
+
+  def close
+    dbg_detach
+    @gdb.close if @gdb
   end
 
   private
@@ -342,6 +467,50 @@ class GdbProxy
 
   def dbg_remove_breakpoint(addr, kind)
     dbg_send_cmd(Commands::REMOVE_BP, [ addr, :u32 ])
+  end
+
+  def dbg_insert_tracepoint(addr, kind, pass)
+    dbg_send_cmd(Commands::INSERT_TP, [ addr, :u32 ], [ kind, :u8 ], [ pass, :u32 ])
+  end
+
+  def dbg_add_tracepoint_action(addr, type)
+    dbg_send_cmd(Commands::ADD_TP_ACTION, [ addr, :u32 ], [ type, :u8 ])
+  end
+
+  def dbg_enable_tracepoint(addr)
+    dbg_send_cmd(Commands::ENABLE_TP, [ addr, :u32 ])
+  end
+
+  def dbg_disable_tracepoint(addr)
+    dbg_send_cmd(Commands::DISABLE_TP, [ addr, :u32 ])
+  end
+
+  def dbg_get_tracepoint_status(addr)
+    resp = dbg_send_cmd(Commands::GET_TP_STATUS, [ addr, :u32 ])
+    if resp
+      enabled, hits, usage = resp.unpack('CVV')
+      return { :enabled => enabled, :hits => hits, :usage => usage }
+    end
+  end
+
+  def dbg_get_tracebuffer_frame(n)
+    dbg_send_cmd(Commands::GET_TRACE_FRAME, [ n, :u32 ])
+  end
+
+  def dbg_download_tracebuffer
+    n = 0
+    while (frame = dbg_get_tracebuffer_frame(n))
+      tp_addr = frame.slice!(0,4).unpack('V')[0]
+      tp_id = -1
+      @tracepoints.each_pair do |id, tp|
+        if tp.addr == tp_addr
+          tp_id = id
+          break
+        end
+      end
+      @tracebuffer.add_frame(tp_id, frame)
+      n = n + 1
+    end
   end
 
   def dbg_read_memory(addr, size)
@@ -499,9 +668,32 @@ class GdbProxy
       when /^qSymbol::/
         send_packet('OK')
 
+      when /^qTMinFTPILen/
+        send_packet('') # Fast tracepoints not supported
+
       when /^QTinit/
         dbg_send_cmd(Commands::TRACE_CLEAR)
         send_packet('OK')
+
+      when /^QTEnable:(.+):(.+)/
+        n = $1.hex
+        addr = $2.hex
+        if @tracepoints.include?(n) and @tracepoints[n].addr == addr
+          dbg_enable_tracepoint(addr)
+          send_packet('OK')
+        else
+          send_packet('E00')
+        end
+
+      when /^QTDisable:(.+):(.+)/
+        n = $1.hex
+        addr = $2.hex
+        if @tracepoints.include?(n) and @tracepoints[n].addr == addr
+          dbg_disable_tracepoint(addr)
+          send_packet('OK')
+        else
+          send_packet('E00')
+        end
 
       when /^QTDV:(.+):(.+)/
         n = $1.hex
@@ -517,6 +709,16 @@ class GdbProxy
           send_packet('U')
         end
 
+      when /^qTP:(.+):(.+)/
+        n = $1.hex
+        addr = $2.hex
+        tpstatus = dbg_get_tracepoint_status(addr)
+        if tpstatus
+          send_packet("V#{tpstatus[:hits].to_s(16)}:#{tpstatus[:usage].to_s(16)}")
+        else
+          send_packet('E00')
+        end
+
       when /^qTStatus/
         info = dbg_get_trace_status()
         
@@ -524,28 +726,54 @@ class GdbProxy
         status = info.delete_if{|k| k == :trunning}.to_a.map{ |o,v| "#{o}:#{v.to_s 16}"}.join(';')
         send_packet("T#{running};#{status}")
 
-      when /^qTfV/, /^qTfP/
-        send_packet 'l' # TODO
-
-      when /QTDP:([^-]+):(.+):(.+):(.+):(.+)(:X(.+),(.+))?-$/
-        n = $1.hex
-        addr = $2.hex
-        pass = $5.hex
-        unless $6.empty?
-          condition = $8.hex
+      when /^QTStart/
+        @tracepoints.each_pair do |id, tp|
+          dbg_insert_tracepoint(tp.addr, CpuState::THUMB, tp.pass)
+          tp.actions.each do |action|
+            dbg_add_tracepoint_action(tp.addr, action)
+          end
         end
-
-        @tracepoints[n] = Tracepoint.new(n, addr, pass, condition)
+        dbg_send_cmd(Commands::TRACE_START)
         send_packet('OK')
 
-      when /QTDP:-(.+):(.+):(.+)-?$/
+      when /^QTStop/
+        dbg_send_cmd(Commands::TRACE_STOP)
+        dbg_download_tracebuffer
+        send_packet('OK')
+
+      when /^QTFrame:(.+)/
+        n = $1.hex 
+        @current_frame = @tracebuffer.frames[n] 
+        if @current_frame
+          send_packet("F#{n.to_s 16}T#{@current_frame.tp_num}")
+        else
+          send_packet('F-1')
+        end
+
+      when /^qTfV/, /^qTfP/, /^qTsV/, /^qTsP/
+        send_packet 'l' # TODO
+
+      when /QTDP:([^-]+):(.+):(.+):(.+):(.+)(:X(.+),(.+))?-?$/
+        n = $1.hex
+        addr = $2.hex
+        step = $4.hex
+        pass = $5.hex
+        condition = $8.hex if $6
+
+        print step
+        fail "Stepping tracepoints are not supported" if step != 0
+
+        @tracepoints[n] = Tracepoint.new(addr, pass, condition)
+        send_packet('OK')
+
+      when /QTDP:-(.+):(.+):([^-]+)-?$/
         n = $1.hex
         actions = StringScanner.new($3)
         until actions.eos?
-          case actions.getch
+          case type = actions.getch
             when 'R'
               mask = actions.scan /[0-9a-fA-F]+/
-              @tracepoints[n].actions << [ :R, mask ]
+              @tracepoints[n].actions << Tracepoint::Actions::COLLECT_REGS
             
             #when 'M'
             #  actions.scan /[0-9a-fA-F]+,[0-9a-fA-F]+,[0-9a-fA-F]+/
@@ -556,11 +784,26 @@ class GdbProxy
               @tracepoints[n].actions << [ :X, code ]
 
             else
-              fail 'Bad QTDP packet'
+              fail "Bad QTDP packet : #{type}"
           end
         end
 
         send_packet('OK')
+
+      when /^QTBuffer:circular:(.+)/
+        circular = $1.hex
+        send_packet('OK') # TODO
+
+      when /^qTBuffer:(.+),(.+)/
+        offset = $1.hex
+        len = $2.hex
+
+        buffer = @tracebuffer.dump[offset, len]
+        if buffer
+          send_packet(buffer.unpack('H*')[0])
+        else
+          send_packet('l')
+        end
 
       when /^vCont\?/
         send_packet('vCont;t;c;s')
@@ -650,7 +893,12 @@ class GdbProxy
         end
 
       when /^g/
-        regs = dbg_get_registers(@current_task)
+        if @current_frame
+          regs = @current_frame.get_registers
+        else
+          regs = dbg_get_registers(@current_task)
+        end
+
         if regs
           data = (0..15).to_a.map{|r| 
             [regs[r]].pack('V').unpack('N')[0].to_s(16).rjust(8,'0')
@@ -662,7 +910,12 @@ class GdbProxy
 
       when /^p(.*)/
         r = $1.hex
-        regs = dbg_get_registers(@current_task)
+        if @current_frame
+          regs = @current_frame.get_registers
+        else
+          regs = dbg_get_registers(@current_task)
+        end
+
         if regs and regs[r]
           value = [regs[r]].pack('V').unpack('N')[0].to_s(16).rjust(8,'0')
           send_packet(value)
@@ -743,6 +996,24 @@ class GdbProxy
         )
         send_packet('OK')
 
+      when /^xCustom:Trace:(.*):(.*)/
+        addr = $1.hex
+        pass = $2.hex
+        kind = CpuState::THUMB
+        dbg_insert_tracepoint(addr, kind, pass)
+        dbg_enable_tracepoint(addr)
+        send_packet('OK')
+
+      when /^xCustom:InfoTP:(.*)/
+        addr = $1.hex
+        tpstatus = dbg_get_tracepoint_status(addr)
+        send_packet("V#{tpstatus[:hits].to_s(16)}:#{tpstatus[:usage].to_s(16)}")
+
+      when /^xCustom:Frame:(.*)/
+        n = $1.hex
+        frame = dbg_get_tracebuffer_frame(n)
+        send_packet('OK')
+
     else
       fail data #XXX: remove
       send_packet('')
@@ -811,10 +1082,14 @@ if $0 == __FILE__
   begin
     PORT = ARGV.find{|arg| arg =~ /tcp:/i}.split(':')[1].to_i
     SERIAL = ARGV.find{|arg| arg =~ /tty:/i}.split(':')[1]
-
   rescue
     abort "Usage: #{$0} tcp:<PORT> tty:<FILE>"
   end
 
-  GdbProxy.new(PORT, SERIAL).run
+  begin
+    proxy = GdbProxy.new(PORT, SERIAL)
+    proxy.run
+  ensure
+    proxy.close
+  end
 end

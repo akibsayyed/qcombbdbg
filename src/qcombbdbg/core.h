@@ -24,7 +24,7 @@
 #include "rex.h"
 
 #define DBG_HEAP_BASE_ADDR 0x1e00000
-#define DBG_HEAP_SIZE 0x100000
+#define DBG_HEAP_SIZE 0x80000
 
 /* Hooked command from the diagnostic task */
 #define DBG_CMD 0x7b
@@ -47,12 +47,20 @@ typedef int task_id;
 #define ERROR_INVALID_MEMORY_ACCESS -8
 #define ERROR_NO_TRACEPOINT -9
 #define ERROR_NO_TRACE_VARIABLE -10
-#define ERROR_NO_MEMORY_AVAILABLE -11
+#define ERROR_NO_TRACE_FRAME -11
+#define ERROR_NO_MEMORY_AVAILABLE -12
+#define ERROR_RELOCATION_FAILURE -13
+#define ERROR_TRACE_ALREADY_RUNNING -14
+#define ERROR_TRACE_NOT_RUNNING -15
+#define ERROR_INVALID_TRACE_ACTION -16
 
 /* Memory breakpoint opcodes */
 #define ARM_BKPT 0xe1200070
 #define THUMB_BKPT 0xbe00 
 #define THUMB_UNDEF 0xde00
+
+#define foreach_breakpoint(var) for ( var = bps; var != 0; var = var->next )
+#define foreach_tracepoint_action(tp, action) for ( action = tp->trace.actions; action != 0; action = action->next )
 
 enum cmd_type 
 {
@@ -78,14 +86,20 @@ enum cmd_type
   CMD_REMOVE_BREAKPOINT,
 
   /* Tracepoints related commands */
-  CMD_INSERT_TRACEPOINT,
-  CMD_REMOVE_TRACEPOINT,
   CMD_TRACE_CLEAR,
   CMD_TRACE_START,
   CMD_TRACE_STOP,
   CMD_TRACE_STATUS,
   CMD_GET_TVAR,
   CMD_SET_TVAR,
+  CMD_INSERT_TRACEPOINT,
+  CMD_REMOVE_TRACEPOINT,
+  CMD_ENABLE_TRACEPOINT,
+  CMD_DISABLE_TRACEPOINT,
+  CMD_GET_TRACEPOINT_STATUS,
+  CMD_SET_TRACEPOINT_CONDITION,
+  CMD_ADD_TRACEPOINT_ACTION,
+  CMD_GET_TRACE_FRAME,
 
 #ifdef DEBUG
   CMD_DEBUG_ECHO = 0x80,  /* Simple echo */
@@ -107,12 +121,16 @@ enum packet_type
   PACKET_EVENT
 };
 
+/*
+ *  Indicating the reason of the event packet.
+ */
 enum event_type 
 {
   EVENT_STOP,
   EVENT_BREAKPOINT,
   EVENT_MEMORY_FAULT,
-  EVENT_ILLEGAL_INSTRUCTION
+  EVENT_ILLEGAL_INSTRUCTION,
+  EVENT_RESET
 };
 
 enum task_state 
@@ -129,6 +147,14 @@ enum breakpoint_type
   BREAKPOINT_TRACE
 };
 
+enum tracepoint_type
+{
+  TRACEPOINT_ACTION_COLLECT_REGS,
+  TRACEPOINT_ACTION_COLLECT_MEM,
+  TRACEPOINT_ACTION_EXEC_GDB,   /* Execute GDB bytecode */
+  TRACEPOINT_ACTION_EXEC_NATIVE /* Execute native code */
+};
+
 enum exception_type
 {
   EXCEPTION_UNDEF_INSN,
@@ -140,7 +166,7 @@ enum exception_type
 #define __packed __attribute__((packed))
 
 /* Debug structures */
-typedef struct __packed _saved_context
+typedef struct __packed
 {
   int spsr;
   int r0;
@@ -166,6 +192,24 @@ typedef struct __packed
   int sp;
 } context;
 
+typedef struct __packed _trace_action
+{
+  struct _trace_action * next;
+
+  char type;
+  union {
+    struct {
+      void * addr;
+      unsigned short size;
+    } collect_mem;
+
+    struct {
+      void * code;
+      unsigned int size;
+    } exec;
+  };
+} trace_action;
+
 typedef struct __packed _breakpoint
 {
   struct _breakpoint * next;
@@ -180,8 +224,9 @@ typedef struct __packed _breakpoint
   union __packed {
     struct __packed {
       char enabled;
-      int hits;
-      int pass;
+      unsigned int hits;
+      unsigned int pass;
+      trace_action * actions;
 
       struct __packed {
         unsigned int size;
@@ -219,6 +264,7 @@ typedef struct __attribute__((packed, aligned(4)))
   union __packed
   {
     task_id tid;
+    unsigned int frame_num;
 
     struct __packed {
       void * base;
@@ -239,6 +285,12 @@ typedef struct __attribute__((packed, aligned(4)))
       void * address;
       char kind;
     } breakpoint;
+
+    struct __packed {
+      void * address;
+      char kind;
+      unsigned int pass;
+    } tracepoint;
 
     struct __packed {
       long long int (* f)(int, int, int, int);
@@ -272,6 +324,11 @@ typedef struct __attribute__((packed, aligned(4)))
       unsigned short id;
       int value;
     } tvar;
+
+    struct __packet {
+      void * address;
+      char type;
+    } taction;
   };
 } request_packet;
 
@@ -287,7 +344,7 @@ typedef struct __attribute__((packed, aligned(4)))
     int size;
     int tvar_value;
     char data[1];
-
+    long long int result;
     context ctx;
 
     struct __packed {
@@ -297,10 +354,6 @@ typedef struct __attribute__((packed, aligned(4)))
     } task_info;
 
     struct __packed {
-      long long int result;
-    } call;
-
-    struct __packed {
       char status;
       char circular;
       unsigned int tframes;
@@ -308,7 +361,17 @@ typedef struct __attribute__((packed, aligned(4)))
       unsigned int tsize;
       unsigned int tfree;
     } tstatus;
-    
+
+    struct __packed {
+      char enabled;
+      int hits;
+      int usage;
+    } tpstatus;
+
+    struct __packed {
+      void * tracepoint_addr;
+      char entries[1];
+    } trace_frame;
   };
 } response_packet;
 
@@ -324,6 +387,9 @@ void * malloc(int);
 void free(void *);
 response_packet * alloc_response_packet(int);
 int dbg_read_memory(void *, void *, unsigned int);
+void dbg_write_insn(void *, char, int);
+void dbg_enable_all_tracepoints(void);
+void dbg_disable_all_tracepoints(void);
 
 #ifdef DEBUG
 response_packet * __cmd_echo(request_packet *, int);
@@ -349,9 +415,18 @@ response_packet * __cmd_insert_breakpoint(void *, char);
 response_packet * __cmd_remove_breakpoint(void *);
 
 response_packet * __cmd_trace_clear(void);
+response_packet * __cmd_trace_start(void);
+response_packet * __cmd_trace_stop(void);
 response_packet * __cmd_trace_status(void);
 response_packet * __cmd_get_trace_variable(unsigned short);
 response_packet * __cmd_set_trace_variable(unsigned short, int);
+response_packet * __cmd_insert_tracepoint(void *, char, unsigned int);
+response_packet * __cmd_remove_tracepoint(void *);
+response_packet * __cmd_enable_tracepoint(void *);
+response_packet * __cmd_disable_tracepoint(void *);
+response_packet * __cmd_get_tracepoint_status(void *);
+response_packet * __cmd_add_tracepoint_action(void *, char);
+response_packet * __cmd_get_tracebuffer_frame(unsigned int);
 
 #endif
 

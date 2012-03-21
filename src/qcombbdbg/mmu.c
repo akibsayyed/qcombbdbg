@@ -74,13 +74,13 @@ mmu_page_table mmu_get_translation_table(void)
 /*
  *  Retrieves MMU cache type register.
  */
-unsigned int mmu_get_cache_type_register(void)
+cache_type_register mmu_get_cache_type_register(void)
 {
-  unsigned int cache_type;
+  cache_type_register cache_type;
 
   ARM_ASSEMBLY(
     "mrc p15, 0, %0, c0, c0, 1\n",
-    : "=r" (cache_type)
+    : "=r" (cache_type.i)
   );
 
   return cache_type;
@@ -99,6 +99,22 @@ unsigned int mmu_get_control_register(void)
   );
 
   return mmu_ctrl;
+}
+
+/*
+ *  Retrieves the length in bytes of a single data cache line.
+ */
+unsigned int mmu_get_data_cache_line_size(void)
+{
+  return (1 << (mmu_get_cache_type_register().bits.dsize_len + 3));
+}
+
+/*
+ *  Retrieves the length in bytes of a single instruction cache line.
+ */
+unsigned int mmu_get_insn_cache_line_size(void)
+{
+  return (1 << (mmu_get_cache_type_register().bits.isize_len + 3));
 }
 
 /*
@@ -146,6 +162,19 @@ void mmu_invalidate_insn_cache_line(void * addr)
 }
 
 /*
+ *  Invalidates a memory range in the instruction cache.
+ */
+void mmu_invalidate_insn_cache_range(void * addr, unsigned int size)
+{
+  unsigned int cache_line_size;
+  void * line;
+
+  cache_line_size = mmu_get_insn_cache_line_size();
+  for ( line = (void *)((int)addr & ~(cache_line_size - 1)); line < (addr + size); line += cache_line_size )
+      mmu_invalidate_insn_cache_line(line);
+}
+
+/*
  *  Cleans a single line in the data cache (commits cache to memory).
  */
 void mmu_clean_data_cache_line(void * addr)
@@ -157,11 +186,28 @@ void mmu_clean_data_cache_line(void * addr)
 }
 
 /*
+ *  Cleans a memory range in the data cache.
+ */
+void mmu_clean_data_cache_range(void * addr, unsigned int size)
+{
+  unsigned int cache_line_size;
+  void * line;
+
+  cache_line_size = mmu_get_data_cache_line_size();
+  for ( line = (void *)((int)addr & ~(cache_line_size - 1)); line < (addr + size); line += cache_line_size )
+      mmu_clean_data_cache_line(line);
+}
+
+/*
  *  Invalidates a single TLB entry.
  */
 void mmu_invalidate_tlb_entry(void * addr)
 {
-  if ( mmu_get_cache_type_register() & MMU_CACHE_CONTROL_SEPARATE )
+  cache_type_register cache_type;
+  
+  cache_type = mmu_get_cache_type_register();
+
+  if ( cache_type.bits.separate )
   {
     mmu_invalidate_insn_tlb_entry(addr);
     mmu_invalidate_data_tlb_entry(addr);
@@ -181,15 +227,32 @@ void mmu_invalidate_tlb_entry(void * addr)
  */
 void mmu_sync_insn_cache_at(void * addr)
 {
-  unsigned int cache_type;
+  cache_type_register cache_type;
 
   cache_type = mmu_get_cache_type_register();
-  if ( cache_type & MMU_CACHE_CONTROL_SEPARATE )
+  if ( cache_type.bits.separate )
   {
-    if ( (cache_type & MMU_CACHE_TYPE_MASK) != MMU_CACHE_TYPE_WRITE_THROUGH )
+    if ( cache_type.bits.ctype != MMU_CACHE_TYPE_WRITE_THROUGH )
       mmu_clean_data_cache_line(addr);
 
     mmu_invalidate_insn_cache_line(addr);
+  }
+}
+
+/*
+ *  Same as mmu_sync_insn_cache_at() but on a memory range.
+ */
+void mmu_sync_insn_cache_range(void * addr, unsigned int size)
+{
+  cache_type_register cache_type;
+
+  cache_type = mmu_get_cache_type_register();
+  if ( cache_type.bits.separate )
+  {
+    if ( cache_type.bits.ctype != MMU_CACHE_TYPE_WRITE_THROUGH )
+      mmu_clean_data_cache_range(addr, size);
+
+    mmu_invalidate_insn_cache_range(addr, size);
   }
 }
 

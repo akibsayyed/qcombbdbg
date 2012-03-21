@@ -97,6 +97,14 @@ response_packet * __cmd_dispatcher(request_packet * packet, int size)
       response = __cmd_trace_clear();
       break;
 
+    case CMD_TRACE_START:
+      response = __cmd_trace_start();
+      break;
+
+    case CMD_TRACE_STOP:
+      response = __cmd_trace_stop();
+      break;
+
     case CMD_TRACE_STATUS:
       response = __cmd_trace_status();
       break;
@@ -107,6 +115,38 @@ response_packet * __cmd_dispatcher(request_packet * packet, int size)
 
     case CMD_SET_TVAR:
       response = __cmd_set_trace_variable(packet->tvar.id, packet->tvar.value);
+      break;
+
+    case CMD_INSERT_TRACEPOINT:
+      response = __cmd_insert_tracepoint(
+        packet->tracepoint.address,
+        packet->tracepoint.kind,
+        packet->tracepoint.pass
+      );
+      break;
+
+    case CMD_REMOVE_TRACEPOINT:
+      response = __cmd_remove_tracepoint(packet->breakpoint.address);
+      break;
+
+    case CMD_ENABLE_TRACEPOINT:
+      response = __cmd_enable_tracepoint(packet->breakpoint.address);
+      break;
+
+    case CMD_DISABLE_TRACEPOINT:
+      response = __cmd_disable_tracepoint(packet->breakpoint.address);
+      break;
+
+    case CMD_GET_TRACEPOINT_STATUS:
+      response = __cmd_get_tracepoint_status(packet->breakpoint.address);
+      break;
+
+    case CMD_ADD_TRACEPOINT_ACTION:
+      response = __cmd_add_tracepoint_action(packet->taction.address, packet->taction.type);
+      break;
+
+    case CMD_GET_TRACE_FRAME:
+      response = __cmd_get_tracebuffer_frame(packet->frame_num);
       break;
 
 #ifdef DEBUG

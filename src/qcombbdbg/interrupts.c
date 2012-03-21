@@ -46,34 +46,92 @@ interrupt_vector_table original_ivt;
 
 /*
  *  Disables IRQ and FIQ interrupts.
+ *  Returns previous interrupt flags.
  */
-void cpu_interrupts_disable(void)
+int cpu_interrupts_disable(void)
 {
-  unsigned int tmp_reg;
+  int tmp_reg, ret;
 
   ARM_ASSEMBLY(
     "mrs %0, cpsr\n"
-    "orr %0, %0, %[mask_int]\n"
-    "msr cpsr_c, %0\n",
-    : "=r" (tmp_reg)
+    "orr %1, %0, %[mask_int]\n"
+    "msr cpsr_c, %1\n"
+    "and %0, %0, %[mask_int]\n",
+    : "=r" (ret), "=r" (tmp_reg)
     : [mask_int] "i" (ARM_SPR_MASK_INTS)
   );
+
+  return ret;
 }
 
 /*
  *  Enables IRQ and FIQ interrupts.
+ *  Returns previous interrupt flags.
  */
-void cpu_interrupts_enable(void)
+int cpu_interrupts_enable(void)
 {
-  unsigned int tmp_reg;
+  int tmp_reg, ret;
+
+  ARM_ASSEMBLY(
+    "mrs %0, cpsr\n"
+    "bic %1, %0, %[mask_int]\n"
+    "msr cpsr_c, %1\n"
+    "and %0, %0, %[mask_int]\n",
+    : "=r" (ret), "=r" (tmp_reg)
+    : [mask_int] "i" (ARM_SPR_MASK_INTS)
+  );
+
+  return ret;
+}
+
+/*
+ *  Checks whether interrupts are currently enabled.
+ */
+int cpu_are_interrupts_enabled(void)
+{
+  int cpsr;
+
+  ARM_ASSEMBLY(
+    "mrs %0, cpsr\n",
+    : "=r" (cpsr)
+  );
+
+  return (cpsr & ARM_SPR_MASK_INTS) != ARM_SPR_MASK_INTS;
+}
+
+/*
+ *  Restores interrupts state.
+ */
+void cpu_restore_interrupts(int flags)
+{
+  int tmp_reg;
 
   ARM_ASSEMBLY(
     "mrs %0, cpsr\n"
     "bic %0, %0, %[mask_int]\n"
+    "and %1, %1, %[mask_int]\n"
+    "orr %0, %0, %1\n"
     "msr cpsr_c, %0\n",
     : "=r" (tmp_reg)
-    : [mask_int] "i" (ARM_SPR_MASK_INTS)
+    : "r" (flags), [mask_int] "i" (ARM_SPR_MASK_INTS)
   );
+}
+
+/*
+ *  Check if we are currently processing an IRQ.
+ *  REX sets the processor mode to either IRQ or SYSTEM when doing this.
+ */
+int cpu_is_in_irq_mode(void)
+{
+  int cpsr;
+
+  ARM_ASSEMBLY(
+    "mrs %0, cpsr\n",
+    : "=r" (cpsr)
+  );
+
+  cpsr &= ARM_SPR_MASK_MODE;
+  return (cpsr == ARM_MODE_IRQ) || (cpsr == ARM_MODE_SYS);
 }
 
 /*
@@ -98,18 +156,18 @@ void __attribute__((naked)) restore_context(void)
 void __attribute__((naked)) prefetch_abort_handler(void)
 {
   ARM_ASSEMBLY(
-    ".arm\n"
-    ".code 32\n"
     "stmfd sp!, {r0}\n"             /* save r0 on abort stack */
-    "mrs r0, spsr\n" 
     "sub r0, lr, #4\n"              /* lr_abort = prefetch_abort_address + 4 */
-    "msr cpsr_c, %[svc_mode]\n"     /* 11010011b : move to supervisor mode, disabled interrupts */
+    "mrs lr, spsr\n"
+    "bic lr, lr, %[thumb_flag]\n"
+    "orr lr, lr, %[mask_ints]\n"
+    "msr cpsr_c, lr\n"                      /* move to calling mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store return address */
     "stmfd sp!, {r1-r12, lr}\n"     /* store lr_supervisor, r1-r12 */
     "msr cpsr_c, %[abort_mode]\n"           /* 11010111b : move to abort mode, disabled interrupts */
     "ldmfd sp!, {r0}\n"             /* restore original r0 */
     "mrs r1, spsr\n"
-    "msr cpsr_c, %[svc_mode]\n"     /* 11010011b : move to supervisor mode, disabled interrupts */
+    "msr cpsr_c, lr\n"                      /* move to calling mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store r0 */
     "stmfd sp!, {r1}\n"             /* store spsr, return frame complete */
 
@@ -118,7 +176,7 @@ void __attribute__((naked)) prefetch_abort_handler(void)
 
     "msr cpsr_c, %[abort_mode]\n"           /* 11010111b : move to abort mode, disabled interrupts */
                                     /* 
-                                     * SUPERVISOR STACK:
+                                     * CALLING STACK:
                                      *  original r0-r12 registers
                                      *  original_lr
                                      *  pc = fault_address
@@ -139,14 +197,10 @@ void __attribute__((naked)) prefetch_abort_handler(void)
     ".arm\n"
     ".code 32\n"
     ".prefetch_abort_xfer_to_dbg_handler:\n"
-    "mrs r12, cpsr\n"
-    "bic r12, r12, %[mask_ints]\n"
-    "msr cpsr, r12\n"               /* enable interrupts */
     "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_BREAKPOINT, fault_address) */
     "blx restore_context\n",
 
     :: 
-    [svc_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_SVC),
     [abort_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_ABORT),
     [thumb_flag] "i" (ARM_SPR_THUMB),
     [event] "i" (EVENT_BREAKPOINT),
@@ -157,18 +211,18 @@ void __attribute__((naked)) prefetch_abort_handler(void)
 void __attribute__((naked)) data_abort_handler(void)
 {
   ARM_ASSEMBLY(
-    ".arm\n"
-    ".code 32\n"
     "stmfd sp!, {r0}\n"             /* save r0 on abort stack */
-    "mrs r0, spsr\n" 
     "sub r0, lr, #8\n"              /* lr_abort = data_abort_address + 8 */
-    "msr cpsr_c, %[svc_mode]\n"           /* 11010011b : move to supervisor mode, disabled interrupts */
+    "mrs lr, spsr\n"
+    "bic lr, lr, %[thumb_flag]\n"
+    "orr lr, lr, %[mask_ints]\n"
+    "msr cpsr_c, lr\n"                      /* move to calling mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store return address */
     "stmfd sp!, {r1-r12, lr}\n"     /* store lr_supervisor, r1-r12 */
     "msr cpsr_c, %[abort_mode]\n"           /* 11010111b : move to abort mode, disabled interrupts */
     "ldmfd sp!, {r0}\n"             /* restore original r0 */
     "mrs r1, spsr\n"
-    "msr cpsr_c, %[svc_mode]\n"           /* 11010011b : move to supervisor mode, disabled interrupts */
+    "msr cpsr_c, lr\n"                      /* move to calling mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store r0 */
     "stmfd sp!, {r1}\n"             /* store spsr, return frame complete */
     
@@ -198,14 +252,10 @@ void __attribute__((naked)) data_abort_handler(void)
     ".arm\n"
     ".code 32\n"
     ".data_abort_xfer_to_dbg_handler:\n"
-    "mrs r12, cpsr\n"
-    "bic r12, r12, %[mask_ints]\n"
-    "msr cpsr, r12\n"               /* enable interrupts */
     "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_MEMORY_FAULT, fault_address) */
     "blx restore_context\n",
 
     :: 
-    [svc_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_SVC),
     [abort_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_ABORT),
     [thumb_flag] "i" (ARM_SPR_THUMB),
     [event] "i" (EVENT_MEMORY_FAULT),
@@ -216,21 +266,22 @@ void __attribute__((naked)) data_abort_handler(void)
 void __attribute__((naked)) undefined_instruction_handler(void)
 {
   ARM_ASSEMBLY(
-    ".arm\n"
-    ".code 32\n"
     "stmfd sp!, {r0}\n"             /* save r0 on abort stack */
     "mrs r0, spsr\n" 
     "tst r0, %[thumb_flag]\n"       /* interrupt occured in thumb state ? */
     "sub r0, lr, #2\n"              /* lr_undef = undefined_address + 2 (thumb) */
     "subeq r0, r0, #2\n"            /* lr_undef = undefined_address + 4 (arm state) */
 
-    "msr cpsr_c, %[svc_mode]\n"           /* 11010011b : move to supervisor mode, disabled interrupts */
+    "mrs lr, spsr\n"
+    "bic lr, lr, %[thumb_flag]\n"
+    "orr lr, lr, %[mask_ints]\n"
+    "msr cpsr_c, lr\n"                      /* move to calling mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store return address */
     "stmfd sp!, {r1-r12, lr}\n"     /* store lr_supervisor, r1-r12 */
     "msr cpsr_c, %[undef_mode]\n"           /* 11010111b : move to undefined mode, disabled interrupts */
     "ldmfd sp!, {r0}\n"             /* restore original r0 */
     "mrs r1, spsr\n"
-    "msr cpsr_c, %[svc_mode]\n"           /* 11010011b : move to supervisor mode, disabled interrupts */
+    "msr cpsr_c, lr\n"                      /* move to calling mode, disabled interrupts */
     "stmfd sp!, {r0}\n"             /* store r0 */
     "stmfd sp!, {r1}\n"             /* store spsr, return frame complete */
 
@@ -261,14 +312,10 @@ void __attribute__((naked)) undefined_instruction_handler(void)
     ".arm\n"
     ".code 32\n"
     ".undefined_insn_xfer_to_dbg_handler:\n"
-    "mrs r12, cpsr\n"
-    "bic r12, r12, %[mask_ints]\n"
-    "msr cpsr, r12\n"               /* enable interrupts */
     "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_ILLEGAL_INSTRUCTION, fault_address) */
     "blx restore_context\n",
 
     :: 
-    [svc_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_SVC),
     [undef_mode] "i" (ARM_SPR_MASK_INTS | ARM_MODE_UNDEF),
     [thumb_flag] "i" (ARM_SPR_THUMB),
     [event] "i" (EVENT_ILLEGAL_INSTRUCTION),
@@ -277,19 +324,40 @@ void __attribute__((naked)) undefined_instruction_handler(void)
 }
 
 /*
- *  XXX: We are already in supervisor mode.
- *  SVC instructions are LR destructive.
- *
-void __attribute__((naked)) software_interrupt_handler(void)
+ *  This is not recoverable. We are supposedly dead at this point, but try to contact the debugger anyway.
+ */
+void __attribute__((naked)) reset_handler(void)
 {
+  ARM_ASSEMBLY(
+    ".arm\n"
+    ".code 32\n"
+    "stmfd sp!, {lr}\n"             /* store return address (UNPREDICTABLE) */
+    "stmfd sp!, {r0-r12, lr}\n"     /* store lr_supervisor (UNPREDICTABLE), r1-r12 */
+    "mrs r1, spsr\n"
+    "stmfd sp!, {r1}\n"             /* store spsr (UNPREDICTABLE), return frame complete */
+
+    "mov r0, %[event]\n"            /* r0 = EVENT_RESET */
+    "mov r1, sp\n"                  /* r1 = saved context */
+
+    "mrs r12, cpsr\n"
+    "bic r12, r12, %[mask_ints]\n"
+    "msr cpsr, r12\n"               /* enable interrupts */
+    "blx dbg_break_handler\n"       /* call dbg_break_handler(EVENT_RESET, fault_address) */
+    "blx restore_context\n",
+
+    :: 
+    [event] "i" (EVENT_RESET),
+    [mask_ints] "i" (ARM_SPR_MASK_INTS)
+  );
 }
-*/
 
 void install_interrupt_handlers(void)
 {
-  NO_INTERRUPTS(
+  WITHOUT_INTERRUPTS(
     mmu_disable();
 
+    INSTALL_VECTOR_HANDLER(reset_vector, &reset_handler);
+    INSTALL_VECTOR_HANDLER(software_vector, &reset_handler);
     INSTALL_VECTOR_HANDLER(prefetch_abort_vector, &prefetch_abort_handler);
     INSTALL_VECTOR_HANDLER(data_abort_vector, &data_abort_handler);
     INSTALL_VECTOR_HANDLER(undefined_instruction_vector, &undefined_instruction_handler);
@@ -300,9 +368,11 @@ void install_interrupt_handlers(void)
 
 void restore_interrupt_handlers(void)
 {
-  NO_INTERRUPTS(
+  WITHOUT_INTERRUPTS(
     mmu_disable();
 
+    RESTORE_VECTOR_HANDLER(reset_vector);
+    RESTORE_VECTOR_HANDLER(software_vector);
     RESTORE_VECTOR_HANDLER(prefetch_abort_vector);
     RESTORE_VECTOR_HANDLER(data_abort_vector);
     RESTORE_VECTOR_HANDLER(undefined_instruction_vector);

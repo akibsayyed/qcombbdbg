@@ -64,6 +64,17 @@ typedef struct __attribute__((packed, aligned(4))) _rex_task
   int unknown_80;
 } rex_task;
 
+typedef struct __attribute__((packed)) _rex_critical_section
+{
+  char count;
+  char pad1;
+  char pad2;
+  char pad3;
+  rex_task * owner_task;
+  rex_task * pending_task;
+  int owner_priority;
+} rex_critical_section;
+
 typedef struct __attribute__((packed)) _rex_heap_chunk
 {
   struct _rex_heap_chunk * forw_offset;
@@ -107,11 +118,6 @@ typedef void * (* rex_apc_routine)(void *);
 
 #define REX_EXECUTE_APC_STACK_SIZE 6 * sizeof(int) // @0x1375ec: push {r3-r7,lr}
 
-#define NO_INTERRUPTS(code) \
-  cpu_interrupts_disable(); \
-  code; \
-  cpu_interrupts_enable(); \
-
 #define TASK_ENABLE(task) task->disabled = 0;
 #define TASK_DISABLE(task) task->disabled = 1;
 
@@ -130,6 +136,10 @@ extern int rex_wait(int signals);
 extern int rex_set_task_signals(rex_task *, int);
 extern int rex_clear_task_signals(rex_task *, int);
 extern int rex_queue_dpc(rex_apc_routine, rex_task *, void *);
+
+extern void rex_initialize_critical_section(rex_critical_section *);
+extern void rex_enter_critical_section(rex_critical_section *);
+extern void rex_leave_critical_section(rex_critical_section *);
 
 extern void heap_create(rex_heap *, void *, int, void (*)(rex_heap *));
 extern void * heap_malloc(rex_heap *, int);

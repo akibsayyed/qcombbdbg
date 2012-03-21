@@ -29,6 +29,7 @@
 #define ARM_MODE_UNDEF 0x1b
 #define ARM_MODE_SYS 0x1f
 
+#define ARM_SPR_MASK_MODE 0x1f
 #define ARM_SPR_THUMB (1 << 5)
 #define ARM_SPR_MASK_FIQ (1 << 6)
 #define ARM_SPR_MASK_IRQ (1 << 7)
@@ -54,8 +55,21 @@ typedef struct
 #define RESTORE_VECTOR_HANDLER(vector) \
   ivt->vector = original_ivt.vector;
 
-void cpu_interrupts_disable(void);
-void cpu_interrupts_enable(void);
+#define WITHOUT_INTERRUPTS(code) \
+  int int_mask = cpu_interrupts_disable(); \
+  code; \
+  cpu_restore_interrupts(int_mask); \
+
+#define WITH_INTERRUPTS(code) \
+  int int_mask = cpu_interrupts_enable(); \
+  code; \
+  cpu_restore_interrupts(int_mask); \
+
+int cpu_interrupts_disable(void);
+int cpu_interrupts_enable(void);
+void cpu_restore_interrupts(int);
+int cpu_is_in_irq_mode(void);
+int cpu_are_interrupts_enabled(void);
 void install_interrupt_handlers(void);
 void restore_interrupt_handlers(void);
 

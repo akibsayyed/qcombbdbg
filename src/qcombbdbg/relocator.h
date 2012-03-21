@@ -21,6 +21,8 @@
 #ifndef __RELOCATOR_H
 #define __RELOCATOR_H
 
+#define RELOC_INSN_DEFAULT_BUFFER_SIZE 256
+
 /*
  *  ARM general purpose registers.
  */
@@ -63,8 +65,9 @@ enum thumb_insns
   T_ADD_SP_IMM7,
   T_B_COND,
   T_B,
-  T_BL,
-  T_BLX,
+  T_BL_HI,
+  T_BL_LO,
+  T_BLX_LO,
   T_BLX_REG,
   T_BX,
   /* T_CMP_HI, Do not take into account the case CMP PC, reg */
@@ -116,7 +119,10 @@ enum arm_conditions
 };
 
 #define REVERSE_COND(cond) ( ((cond >> 1) << 1) + 1 - (cond % 2) )
-#define STACK_SHIFT 64
+#define STACK_SHIFT 512
+#if STACK_SHIFT < 64
+  #error "Unsufficient stack shift has been configured"
+#endif
 
 /*
  *  Structure needed by the relocated code.
@@ -124,10 +130,11 @@ enum arm_conditions
  */
 typedef struct
 {
-  unsigned int pc;
-  unsigned int cpsr;
-  int thumb_bit;
-} rel_ctrl;
+  unsigned int read_pc; /* PC read value */
+  unsigned int next_pc; /* PC write value */
+  unsigned int flags;   /* Saved conditional flags */
+  unsigned int interrupts; /* Saved interrupts mask */
+} reloc_info;
 
 typedef unsigned short thumb_insn;
 typedef unsigned int arm_insn;
@@ -164,6 +171,7 @@ typedef struct
 } thumb_insn_def;
 
 int relocate_thumb_insn(thumb_insn *, thumb_insn *, int *);
+void return_at_relocated_insn(void (* reloc_addr)(void));
 
 #endif
 

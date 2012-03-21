@@ -27,6 +27,8 @@
 #include "interrupts.h"
 #include "trace.h"
 
+DEFINE_GDB_SCRIPT("scripts/tools/gdb-python/trace.py");
+
 trace_engine tengine;
 
 /*
@@ -38,16 +40,18 @@ int are_registers_collected(trace_frame * tframe)
 {
   trace_entry * tentry;
 
-  tentry = tframe->entries;
-  while ( tentry )
-  {
+  foreach_trace_entry(tframe, tentry)
     if ( tentry->type == TRACE_ENTRY_REGS )
       return 1;
 
-    tentry = tentry->next;
-  }
-
   return 0;
+}
+
+void trace_start(void)
+{
+  tengine.vm.running = 0;
+  tengine.status = 0;
+  dbg_enable_all_tracepoints();
 }
 
 /*
@@ -55,6 +59,7 @@ int are_registers_collected(trace_frame * tframe)
  */
 void trace_stop(char stop_reason)
 {
+  dbg_disable_all_tracepoints();
   tengine.vm.running = 0;
   tengine.status = stop_reason;
 }
@@ -75,14 +80,9 @@ trace_variable * trace_get_variable(unsigned short id)
 {
   trace_variable * tvar;
 
-  tvar = tengine.tvars;
-  while ( tvar )
-  {
+  foreach_trace_var(tvar)
     if ( tvar->id == id)
       return tvar;
-
-    tvar = tvar->next;
-  }
 
   return 0;
 }
@@ -118,15 +118,15 @@ unsigned int trace_entry_get_size(trace_entry * tentry)
   switch ( tentry->type )
   {
     case TRACE_ENTRY_REGS:
-      size = sizeof(trace_registers_entry); 
+      size = sizeof(trace_registers_entry) + 1; 
       break;
 
     case TRACE_ENTRY_MEM:
-      size = __builtin_offsetof(trace_memory_entry, data) + tentry->entry.mem.length; 
+      size = __builtin_offsetof(trace_memory_entry, data) + tentry->entry.mem.length + 1; 
       break;
 
     case TRACE_ENTRY_VAR:
-      size = sizeof(trace_variable_entry);
+      size = sizeof(trace_variable_entry) + 1;
       break;
 
     default:
@@ -137,23 +137,38 @@ unsigned int trace_entry_get_size(trace_entry * tentry)
 }
 
 /*
+ *  Returns the size occupied by a trace frame.
+ */
+unsigned int trace_frame_get_size(trace_frame * tframe)
+{
+  unsigned int size;
+  trace_entry * tentry;
+
+  size = 0;
+  if ( tframe->entry_count > 0 )
+    foreach_trace_entry(tframe, tentry)
+      size += trace_entry_get_size(tentry);
+
+  return size;
+}
+
+/*
  *  Add a new entry in the current trace frame.
  */
-int trace_buffer_add_entry(trace_entry * tentry)
+int trace_frame_add_entry(trace_frame * tframe, trace_entry * tentry)
 {
   trace_entry * last_entry;
-  trace_frame * tframe;
   unsigned int size;
 
   size = trace_entry_get_size(tentry);
 
+  /* TODO: circular buffering */
   if ( size + tengine.tbuffer.used > tengine.tbuffer.size )
   {
     free(tentry);
     return TRACE_STOP_BUFFER_FULL;
   }
 
-  tframe = tengine.tbuffer.current_frame;
   if ( tframe->entry_count )
   {
     last_entry = tframe->entries;
@@ -175,26 +190,27 @@ int trace_buffer_add_entry(trace_entry * tentry)
 /*
  *  Records the current thread context in the trace buffer.
  */
-int trace_buffer_trace_registers(context * ctx)
+int trace_buffer_trace_registers(trace_frame * tframe, saved_context * ctx)
 {
   trace_entry * tentry;
 
-  if ( are_registers_collected(tengine.tbuffer.current_frame) )
+  if ( are_registers_collected(tframe) )
     return 0;
   else
   {
     tentry = malloc(__builtin_offsetof(trace_entry, entry) + sizeof(trace_registers_entry));
     tentry->type = TRACE_ENTRY_REGS;
-    __memcpy(&tentry->entry.regs.ctx, ctx, sizeof(context));
+    __memcpy(&tentry->entry.regs.ctx, ctx, sizeof(saved_context));
+    tentry->entry.regs.ctx.sp = (int)(ctx + 1);
 
-    return trace_buffer_add_entry(tentry);
+    return trace_frame_add_entry(tframe, tentry);
   }
 }
 
 /*
  *  Records a piece of memory in the trace buffer.
  */
-int trace_buffer_trace_memory(void * address, unsigned short length)
+int trace_buffer_trace_memory(trace_frame * tframe, void * address, unsigned short length)
 {
   trace_entry * tentry;
 
@@ -209,7 +225,7 @@ int trace_buffer_trace_memory(void * address, unsigned short length)
     return TRACE_STOP_ERROR;
   }
 
-  return trace_buffer_add_entry(tentry);
+  return trace_frame_add_entry(tframe, tentry);
 }
 
 /*
@@ -233,7 +249,8 @@ int trace_buffer_trace_variable(unsigned short id)
   else
     tentry->entry.var.value = tvar->value;
 
-  return trace_buffer_add_entry(tentry);
+  /* XXX: CONCURRENCY ??? */
+  return trace_frame_add_entry(tengine.tbuffer.current_frame, tentry);
 }
 
 /*
@@ -271,12 +288,12 @@ int trace_buffer_remove_oldest_frame(void)
  *  A frame is created when a tracepoint is hit.
  *  Every tracepoint actions creates a new entry in the frame.
  */
-trace_frame * trace_buffer_create_frame(unsigned short tp_id)
+trace_frame * trace_buffer_create_frame(breakpoint * tp)
 {
   trace_frame * tframe;
 
   tframe = malloc(sizeof(trace_frame));
-  tframe->tracepoint_id = tp_id;
+  tframe->tp = tp;
   tframe->entry_count = 0;
   tframe->entries = 0;
   tframe->next = 0;
@@ -285,7 +302,6 @@ trace_frame * trace_buffer_create_frame(unsigned short tp_id)
     tengine.tbuffer.current_frame->next = tframe;
   else
     tengine.tbuffer.frames = tframe;
-
   
   tengine.tbuffer.current_frame = tframe;
   tengine.tbuffer.frame_created++;
@@ -319,6 +335,7 @@ void trace_buffer_clear(void)
 
   tengine.tbuffer.size = TRACE_BUFFER_DEFAULT_SIZE;
   tengine.tbuffer.current_frame = 0;
+  tengine.tbuffer.frames = 0;
   tengine.tbuffer.frame_created = 0;
   tengine.tbuffer.frame_count = 0;
   tengine.tbuffer.used = 0;
@@ -339,8 +356,8 @@ void trace_vm_init(void)
 void trace_engine_init(void)
 {
   tengine.status = TRACE_STOP_NOT_RUN;
-
-  trace_vm_init();
+  //rex_initialize_critical_section(&tengine.critical_section);
+  //trace_vm_init();
   trace_buffer_clear();
 }
 
@@ -450,7 +467,7 @@ void trace_op_trace_quick(int size)
   void * addr;
   addr = (void *)POP.i;
   
-  trace_buffer_trace_memory(addr, size);
+  //trace_buffer_trace_memory(addr, size);
 }
 
 void trace_op_trace(void)
@@ -577,7 +594,7 @@ void trace_op_const(int c)
 
 void trace_op_pop(void)
 {
-  POP.i;
+  (void)POP.i;
 }
 
 void trace_op_reg(int n)

@@ -23,7 +23,9 @@
  *  Needed for displaced stepping and tracepoints.
  */
 
+#include "core.h"
 #include "interrupts.h"
+#include "mmu.h"
 #include "relocator.h"
 
 int thumb_insn_get_cond(thumb_insn insn)
@@ -152,6 +154,9 @@ thumb_insn thumb_insn_set_bitmap(thumb_insn insn, int map)
   return (insn & ~THUMB_REGISTER_BITMAP_MASK) | (map & THUMB_REGISTER_BITMAP_MASK);
 }
 
+/*
+ *  Table of instructions which need to be manually relocated.
+ */
 thumb_insn_def thumb_insn_table[] =
 {
   [T_ADD_HI] =
@@ -159,7 +164,7 @@ thumb_insn_def thumb_insn_table[] =
     .can_read_pc = 1,
     .can_write_pc = 1,
     .can_write_sp = 1,
-    .opcode = { .mask = 0xff00, .value = 0x4400 },
+    .opcode = { .mask = 0xff00, .value = 0x4400 }, /* b01000100_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_rd_hi, .set = thumb_insn_set_rd_hi },
@@ -171,7 +176,7 @@ thumb_insn_def thumb_insn_table[] =
   {
     .can_read_pc = 1,
     .reads_pc = 1,
-    .opcode = { .mask = 0xf800, .value = 0xa000 },
+    .opcode = { .mask = 0xf800, .value = 0xa000 }, /* b10100xxx_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_rd_shifted, .set = thumb_insn_set_rd_shifted },
@@ -183,7 +188,7 @@ thumb_insn_def thumb_insn_table[] =
   {
     .can_write_sp = 1,
     .writes_sp = 1,
-    .opcode = { .mask = 0xff80, .value = 0xb000 },
+    .opcode = { .mask = 0xff80, .value = 0xb000 }, /* b10110000_0xxxxxxx */
     {
       [0] = { .get = thumb_insn_get_sp, .set = 0 /* TODO */ },
       [1] = { .get = thumb_insn_get_imm7, .set = thumb_insn_set_imm7 }
@@ -196,7 +201,7 @@ thumb_insn_def thumb_insn_table[] =
     .can_write_pc = 1,
     .reads_pc = 1,
     .branch = 1,
-    .opcode = { .mask = 0xf000, .value = 0xd000 },
+    .opcode = { .mask = 0xf000, .value = 0xd000 }, /* b1101xxxx_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_imm8, .set = thumb_insn_set_imm8 }
@@ -209,31 +214,42 @@ thumb_insn_def thumb_insn_table[] =
     .can_write_pc = 1,
     .reads_pc = 1,
     .branch = 1,
-    .opcode = { .mask = 0xf800, .value = 0xe000 },
+    .opcode = { .mask = 0xf800, .value = 0xe000 }, /* b11100xxx_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_imm11, .set = thumb_insn_set_imm11 }
     }
   },
 
-  [T_BL] =
+  [T_BL_HI] =
+  {
+    .can_read_pc = 1,
+    .reads_pc = 1,
+    .opcode = { .mask = 0xf800, .value = 0xf000 }, /* b11110xxx_xxxxxxxx */
+    .operands = 
+    {
+      [0] = { .get = thumb_insn_get_imm11, .set = thumb_insn_set_imm11 }
+    }
+  },
+
+  [T_BL_LO] =
   {
     .can_write_pc = 1,
     .branch = 1,
     .link = 1,
-    .opcode = { .mask = 0xf800, .value = 0xf800 },
+    .opcode = { .mask = 0xf800, .value = 0xf800 }, /* b11111xxx_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_imm11, .set = thumb_insn_set_imm11 }
     }
   },
 
-  [T_BLX] =
+  [T_BLX_LO] =
   {
     .can_write_pc = 1,
     .branch = 1,
     .link = 1,
-    .opcode = { .mask = 0xf800, .value = 0xe800 },
+    .opcode = { .mask = 0xf800, .value = 0xe800 }, /* b11101xxx_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_imm11, .set = thumb_insn_set_imm11 }
@@ -246,7 +262,7 @@ thumb_insn_def thumb_insn_table[] =
     .can_write_pc = 1,
     .branch = 1,
     .link = 1,
-    .opcode = { .mask = 0xff80, .value = 0x4780 },
+    .opcode = { .mask = 0xff80, .value = 0x4780 }, /* b01000111_1xxxxxxx */
     .operands = 
     {
       [0] = { .get = thumb_insn_get_rm_hi, .set = thumb_insn_set_rm_hi }
@@ -258,7 +274,7 @@ thumb_insn_def thumb_insn_table[] =
     .can_read_pc = 1,
     .can_write_pc = 1,
     .branch = 1,
-    .opcode = { .mask = 0xff80, .value = 0x4700 },
+    .opcode = { .mask = 0xff80, .value = 0x4700 }, /* b01000111_0xxxxxxx */
     .operands = 
     {
       [0] = { .get = thumb_insn_get_rm_hi, .set = thumb_insn_set_rm_hi }
@@ -282,7 +298,7 @@ thumb_insn_def thumb_insn_table[] =
   {
     .can_read_pc = 1,
     .reads_pc = 1,
-    .opcode = { .mask = 0xf800, .value = 0x4800 },
+    .opcode = { .mask = 0xf800, .value = 0x4800 }, /* b01001xxx_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_rd_shifted, .set = thumb_insn_set_rd_shifted },
@@ -295,7 +311,7 @@ thumb_insn_def thumb_insn_table[] =
     .can_read_pc = 1,
     .can_write_pc = 1,
     .can_write_sp = 1,
-    .opcode = { .mask = 0xff00, .value = 0x4600 },
+    .opcode = { .mask = 0xff00, .value = 0x4600 }, /* b01000110_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_rd_hi, .set = thumb_insn_set_rd_hi },
@@ -308,7 +324,7 @@ thumb_insn_def thumb_insn_table[] =
     .can_write_sp = 1,
     .writes_sp = 1,
     .branch = 1,
-    .opcode = { .mask = 0xff00, .value = 0xbd00 },
+    .opcode = { .mask = 0xff00, .value = 0xbd00 }, /* b10111101_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_bitmap, .set = thumb_insn_set_bitmap }
@@ -319,7 +335,7 @@ thumb_insn_def thumb_insn_table[] =
   {
     .can_write_sp = 1,
     .writes_sp = 1,
-    .opcode = { .mask = 0xff00, .value = 0xbc00 },
+    .opcode = { .mask = 0xff00, .value = 0xbc00 }, /* b10111100_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_bitmap, .set = thumb_insn_set_bitmap }
@@ -330,7 +346,7 @@ thumb_insn_def thumb_insn_table[] =
   {
     .can_write_sp = 1,
     .writes_sp = 1,
-    .opcode  = { .mask = 0xfe00, .value = 0xb400 },
+    .opcode = { .mask = 0xfe00, .value = 0xb400 }, /* b1011010x_xxxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_bitmap, .set = thumb_insn_set_bitmap }
@@ -341,7 +357,7 @@ thumb_insn_def thumb_insn_table[] =
   {
     .can_write_sp = 1,
     .writes_sp = 1,
-    .opcode = { .mask = 0xff80, .value = 0xb080 },
+    .opcode = { .mask = 0xff80, .value = 0xb080 }, /* b10110000_1xxxxxxx */
     .operands =
     {
       [0] = { .get = thumb_insn_get_sp, .set = 0 /* TODO */ },
@@ -513,7 +529,7 @@ int thumb_rel_pop_reg(thumb_insn ** pdest, int regs)
  *  Load or store data from the saved control structure.
  *  Generates:
  *    sub/add sp, STACK_SHIFT - stack_delta
- *    ldr/str reg, [sp, #field]
+ *    ldr/str reg, [sp, #reloc_info.field]
  *    add/sub sp, STACK_SHIFT - stack_delta
  */
 int thumb_rel_load_store_field(thumb_insn ** pdest, int reg, int load, int field, int stack_delta)
@@ -559,63 +575,67 @@ int thumb_rel_load_store_field(thumb_insn ** pdest, int reg, int load, int field
   return written;
 }
 
-int thumb_rel_load_pc(thumb_insn ** pdest, int reg, int stack_delta)
+int thumb_rel_load_read_pc(thumb_insn ** pdest, int reg, int stack_delta)
 {
   return thumb_rel_load_store_field(
     pdest, 
     reg, 
     1, 
-    __builtin_offsetof(rel_ctrl, pc),
+    __builtin_offsetof(reloc_info, read_pc),
     stack_delta
   );
 }
 
-int thumb_rel_store_pc(thumb_insn ** pdest, int reg, int stack_delta)
+int thumb_rel_load_next_pc(thumb_insn ** pdest, int reg, int stack_delta)
+{
+  return thumb_rel_load_store_field(
+    pdest, 
+    reg, 
+    1, 
+    __builtin_offsetof(reloc_info, next_pc),
+    stack_delta
+  );
+}
+
+int thumb_rel_store_next_pc(thumb_insn ** pdest, int reg, int stack_delta)
 {
   return thumb_rel_load_store_field(
     pdest, 
     reg,
     0, 
-    __builtin_offsetof(rel_ctrl, pc),
+    __builtin_offsetof(reloc_info, next_pc),
     stack_delta
   );
 }
 
-int thumb_rel_load_cpsr(thumb_insn ** pdest, int reg, int stack_delta)
+int thumb_rel_load_flags(thumb_insn ** pdest, int reg, int stack_delta)
 {
   return thumb_rel_load_store_field(
     pdest,
     reg,
     1,
-    __builtin_offsetof(rel_ctrl, cpsr),
+    __builtin_offsetof(reloc_info, flags),
     stack_delta
   );
 }
 
-int thumb_rel_load_thumb_bit(thumb_insn ** pdest, int reg, int stack_delta)
+int thumb_rel_load_interrupts(thumb_insn ** pdest, int reg, int stack_delta)
 {
   return thumb_rel_load_store_field(
     pdest,
     reg,
     1,
-    __builtin_offsetof(rel_ctrl, thumb_bit),
-    stack_delta
-  );
-}
-
-int thumb_rel_store_thumb_bit(thumb_insn ** pdest, int reg, int stack_delta)
-{
-  return thumb_rel_load_store_field(
-    pdest,
-    reg,
-    0,
-    __builtin_offsetof(rel_ctrl, thumb_bit),
+    __builtin_offsetof(reloc_info, interrupts),
     stack_delta
   );
 }
 
 /*
  *  Adjusts LR in case of relocating a BL/BLX instruction.
+ *    push {r0}
+ *    ldr r0, [reloc_info.next_pc]
+ *    mov lr, r0
+ *    pop {r0}
  */
 int thumb_rel_adjust_lr(thumb_insn ** pdest, int stack_delta)
 {
@@ -624,24 +644,19 @@ int thumb_rel_adjust_lr(thumb_insn ** pdest, int stack_delta)
 
   dest = *pdest;
  
-  /* push {r0-r1} */
-  thumb_rel_push_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1));
-  stack_delta += 8;
+  /* push {r0} */
+  thumb_rel_push_reg(&dest, T_RBIT(REG_R0));
+  stack_delta += 4;
 
-  /* Load return address into r0 */
-  thumb_rel_load_pc(&dest, REG_R0, stack_delta);
-
-  /* mov r1, 1 */
-  thumb_rel_move_imm_to_reg(&dest, REG_R1, 1);
-
-  /* orr r0, r1 */
-  thumb_rel_or_reg_to_reg(&dest, REG_R0, REG_R1);
+  /* Load next instruction address into r0 */
+  thumb_rel_load_next_pc(&dest, REG_R0, stack_delta);
 
   /* mov lr, r0 */
   thumb_rel_move_reg_to_reg(&dest, REG_LR, REG_R0);
 
-  /* pop {r0-r1} */
-  thumb_rel_pop_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1));
+  /* pop {r0} */
+  thumb_rel_pop_reg(&dest, T_RBIT(REG_R0));
+  stack_delta -= 4;
 
   written = dest - *pdest;
   *pdest = dest;
@@ -654,14 +669,14 @@ int thumb_rel_adjust_lr(thumb_insn ** pdest, int stack_delta)
  *  We need to restore them before return.
  *  Generates:
  *    push {r0-r1}
- *    ldr r1, [cpsr]
+ *    ldr r1, [reloc_info.flags]
  *    bx pc
  *    nop
  *    mrs r0, cpsr
  *    lsl r0, r0, 5
  *    lsr r0, r0, 5
  *    orr r0, r1, r0
- *    msr cpsr, r0
+ *    msr cpsr_f, r0
  *    add r0, pc, 1
  *    bx r0
  *    pop {r0-r1}
@@ -680,7 +695,7 @@ int thumb_rel_restore_flags(thumb_insn ** pdest, int stack_delta)
   stack_delta += 8;
 
   /* load saved flags into r1 */
-  thumb_rel_load_cpsr(&dest, REG_R1, stack_delta);
+  thumb_rel_load_flags(&dest, REG_R1, stack_delta);
  
   if ( (int)dest % 4 == 2 )
     *dest++ = THUMB_NOP; /* align 4 */
@@ -708,7 +723,7 @@ int thumb_rel_restore_flags(thumb_insn ** pdest, int stack_delta)
   *(arm_insn *)dest = a_insn;
   dest += 2; 
 
-  a_insn = 0xe1a002a0; /* msr cpsr, r0 */
+  a_insn = 0xe128f000; /* msr cpsr_f, r0 */
   *(arm_insn *)dest = a_insn;
   dest += 2; 
 
@@ -718,7 +733,7 @@ int thumb_rel_restore_flags(thumb_insn ** pdest, int stack_delta)
   *(arm_insn *)dest = a_insn;
   dest += 2; 
 
-  a_insn = 0xe1200010; /* bx r0 */
+  a_insn = 0xe12fff10; /* bx r0 */
   *(arm_insn *)dest = a_insn;
   dest += 2; 
 
@@ -733,24 +748,27 @@ int thumb_rel_restore_flags(thumb_insn ** pdest, int stack_delta)
 
 /*
  *  Writes epilogue for relocated instruction.
- *  Resuming execution to the next original instruction.
- *  r12 is used to preserve the conditional flags in cpsr.
+ *  Restore interrupt state and resume execution to the next original instruction.
  *
  *    sub sp, 4
- *    push {r0-r2}
- *    mov r0, r12
- *    ldr r1, [saved_pc]
- *    ldr r2, [thumb_bit]
- *    mov r12, r2
- *    add r1, r12
- *    str r1, [sp, #12]
- *    mov r12, r0
- *    pop {r0-r2, pc}
+ *    push {r0-r1}
+ *    ldr r0, [reloc_info.next_pc]
+ *    str r0, [sp, #8]
+ *    ldr r1, [reloc_info.interrupts]
+ *    bx pc
+ *    nop
+ *    mrs r0, cpsr
+ *    bic r0, r0, 0xc0
+ *    orr r0, r0, r1
+ *    msr cpsr_c, r0
+ *    add r0, pc, 1
+ *    pop {r0-r1, pc}
  *
  */
 int thumb_rel_epilogue(thumb_insn ** pdest, int stack_delta)
 {
   thumb_insn insn;
+  arm_insn a_insn;
   thumb_insn * dest;
   int written;
 
@@ -765,37 +783,65 @@ int thumb_rel_epilogue(thumb_insn ** pdest, int stack_delta)
 
   /* TODO: handle the case if stack_delta + 4 == STACK_SHIFT */
 
-  /* push {r0-r2} */
-  thumb_rel_push_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2));
+  /* push {r0-r1} */
+  thumb_rel_push_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1));
+  stack_delta += 8;
 
-  /* mov r0, r12 */
-  thumb_rel_move_reg_to_reg_hi(&dest, REG_R0, REG_R12);
-
-  /* ldr r1, [saved_pc] */
-  thumb_rel_load_pc(&dest, REG_R1, stack_delta);
-
-  /* ldr r2, [thumb_bit] */
-  thumb_rel_load_thumb_bit(&dest, REG_R2, stack_delta);
-  
-  /* mov r12, r2 */
-  thumb_rel_move_reg_to_reg_hi(&dest, REG_R12, REG_R2);
-
-  /* add r1, r12 */
-  thumb_rel_add_reg_to_reg_hi(&dest, REG_R1, REG_R12);
+  /* ldr r0, [saved_pc] */
+  thumb_rel_load_next_pc(&dest, REG_R0, stack_delta);
 
   insn = T_STR_SP_IMM8_OPCODE; 
-  insn = thumb_insn_set_rd_shifted(insn, REG_R1);  
-  insn = thumb_insn_set_imm8(insn, 12 >> 2);
-  *dest++ = insn; /* str r1, [sp, #12] */
+  insn = thumb_insn_set_rd_shifted(insn, REG_R0);  
+  insn = thumb_insn_set_imm8(insn, 8 >> 2);
+  *dest++ = insn; /* str r0, [sp, #8] */
 
+  /* ldr r1, [interrupts] */
+  thumb_rel_load_interrupts(&dest, REG_R1, stack_delta);
 
-  /* pop {r0-r2, pc} */
+  if ( (int)dest % 4 == 2 )
+    *dest++ = THUMB_NOP; /* align 4 */
+
+  insn = thumb_insn_table[T_BX].opcode.value;
+  insn = thumb_insn_table[T_BX].operands[0].set(insn, REG_PC);
+  *dest++ = insn; /* bx pc */
+  *dest++ = THUMB_NOP; /* nop */
+
+  /* Now we are in ARM state */
+
+  a_insn = 0xe10f0000; /* mrs r0, cpsr */
+  *(arm_insn *)dest = a_insn;
+  dest += 2; 
+
+  a_insn = 0xe3c000c0; /* bic r0, r0, #0xc0 */
+  *(arm_insn *)dest = a_insn;
+  dest += 2; 
+
+  a_insn = 0xe1800001; /* orr r0, r0, r1 */
+  *(arm_insn *)dest = a_insn;
+  dest += 2; 
+
+  a_insn = 0xe121f000; /* msr cpsr_c, r0 */
+  *(arm_insn *)dest = a_insn;
+  dest += 2; 
+
+  /* Get back to thumb state */
+  
+  a_insn = 0xe28f0001; /* add r0, pc, 1 */
+  *(arm_insn *)dest = a_insn;
+  dest += 2; 
+
+  a_insn = 0xe12fff10; /* bx r0 */
+  *(arm_insn *)dest = a_insn;
+  dest += 2; 
+
+  /* pop {r0-r1, pc} */
   insn = thumb_insn_table[T_POP_WITH_PC].opcode.value;
   insn = thumb_insn_table[T_POP_WITH_PC].operands[0].set(
     insn, 
-    T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2) | T_RBIT(REG_PC)
+    T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_PC)
   ); 
   *dest++ = insn; 
+  stack_delta -= 8;
 
   written = dest - *pdest;
   *pdest = dest;
@@ -836,7 +882,8 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
   thumb_insn * base, * tmp_dest;
   int stack_delta;
   int tainted_flags;
-  int new_reg, new_reg2, num_regs, i, cond;
+  int new_reg, new_reg2, new_reg3, new_reg4;
+  int num_regs, i, cond;
 
   stack_delta = 0;
   tainted_flags = 0;
@@ -866,6 +913,11 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
     {
       switch ( i )
       {
+        /* 
+         * Unstack registers, set PC as new return address.
+         *
+         * Can switch to ARM state.
+         */
         case T_POP_WITH_PC:
           num_regs = thumb_rel_count_regs_in_map(idef->operands[0].get(insn));   
           
@@ -876,9 +928,8 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           tmp_insn = thumb_insn_set_rd(tmp_insn, REG_R0); 
           *dest++ = tmp_insn; /* ldr r0, [sp, num_regs * 4] */
           
-          /* Save pc value */
-          /* TODO: check thumb bit */
-          thumb_rel_store_pc(&dest, REG_R0, stack_delta);
+          /* Save return value */
+          thumb_rel_store_next_pc(&dest, REG_R0, stack_delta);
           thumb_rel_pop_reg(&dest, T_RBIT(REG_R0)); /* pop {r0} */
           stack_delta -= 4;
 
@@ -891,20 +942,25 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           *dest++ = tmp_insn; /* add sp, 4 */
 
           stack_delta -= num_regs * 4; 
-
           break;
 
+        /*
+         *  If cond:
+         *    PC = PC + (sign_extend(imm8) << 1)
+         *
+         *  Stay in thumb state.
+         */
         case T_B_COND:
           
           tmp_dest = dest;
-          dest++;
+          dest++; /* Leave space for the conditional branch */
 
           /* push {r0-r2} */
           thumb_rel_push_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2));
           stack_delta += 12;
 
-          /* load return address into r0 */
-          thumb_rel_load_pc(&dest, REG_R0, stack_delta);
+          /* load pc into r0 */
+          thumb_rel_load_read_pc(&dest, REG_R0, stack_delta);
 
           /* move r1, imm8 */
           thumb_rel_move_imm_to_reg(&dest, REG_R1, idef->operands[0].get(insn));
@@ -924,8 +980,14 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           /* add r0, r1 */
           thumb_rel_add_reg_to_reg(&dest, REG_R0, REG_R1);
 
+          /* mov r1, 1 */
+          thumb_rel_move_imm_to_reg(&dest, REG_R1, 1);
+
+          /* orr r0, r1 (keep thumb bit) */
+          thumb_rel_or_reg_to_reg(&dest, REG_R0, REG_R1);
+
           /* store return address */
-          thumb_rel_store_pc(&dest, REG_R0, stack_delta);
+          thumb_rel_store_next_pc(&dest, REG_R0, stack_delta);
 
           /* pop {r0-r2} */
           thumb_rel_pop_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2));
@@ -945,6 +1007,11 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           tainted_flags = 1;
           break;
 
+        /*
+         * PC = PC + (sign_extend(imm11) << 1)
+         *
+         * Stay in Thumb state.
+         */
         case T_B:
 
           /* push {r0-r3} */
@@ -952,7 +1019,7 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           stack_delta += 16;
 
           /* Load return address into pc */
-          thumb_rel_load_pc(&dest, REG_R0, stack_delta);
+          thumb_rel_load_read_pc(&dest, REG_R0, stack_delta);
 
           /* mov r1, (imm11 << 1) & 0xff */
           thumb_rel_move_imm_to_reg(&dest, REG_R1, (idef->operands[0].get(insn) << 1) & 0xff);
@@ -981,8 +1048,14 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           /* add r0, r1 */
           thumb_rel_add_reg_to_reg(&dest, REG_R0, REG_R1);
 
+          /* mov r1, 1 */
+          thumb_rel_move_imm_to_reg(&dest, REG_R1, 1);
+
+          /* orr r0, r1 (keep thumb bit) */
+          thumb_rel_or_reg_to_reg(&dest, REG_R0, REG_R1);
+
           /* store return address */
-          thumb_rel_store_pc(&dest, REG_R0, stack_delta);
+          thumb_rel_store_next_pc(&dest, REG_R0, stack_delta);
 
           /* pop {r0-r3} */
           thumb_rel_pop_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2) | T_RBIT(REG_R3));
@@ -991,8 +1064,14 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           tainted_flags = 1;
           break;
 
-        case T_BL:
-        case T_BLX:
+        /*
+         *  PC = LR + (imm11 << 1)
+         *  LR = address of next instruction | 1
+         *
+         *  Can switch to ARM state.
+         */
+        case T_BL_LO:
+        case T_BLX_LO:
           
           /* push {r0-r3} */
           thumb_rel_push_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2) | T_RBIT(REG_R3));
@@ -1001,39 +1080,39 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           /* mov r0, lr */
           thumb_rel_move_reg_to_reg(&dest, REG_R0, REG_LR);
 
-          /* load return address into lr */
+          /* load next instruction into into lr */
           thumb_rel_adjust_lr(&dest, stack_delta);
 
-          /* mov r1, (imm11 << 1) & 0xff */
+          /* mov r1, (imm11 << 1) & 0xff ; imm11[6:0] << 1 */
           thumb_rel_move_imm_to_reg(&dest, REG_R1, (idef->operands[0].get(insn) << 1) & 0xff);
 
-          /* mov r2, (imm11 >> 7) & 0xff */
+          /* mov r2, (imm11 >> 7) & 0xff ; imm11[10:7] */
           thumb_rel_move_imm_to_reg(&dest, REG_R1, (idef->operands[0].get(insn) >> 7) & 0xff);
 
           /* mov r3, 8 */
           thumb_rel_move_imm_to_reg(&dest, REG_R3, 8);
 
-          /* lsl r2, r3 */
+          /* lsl r2, r3 ; */
           thumb_rel_lsl_reg_to_reg(&dest, REG_R2, REG_R3);
 
-          /* orr r1, r2 */
+          /* orr r1, r2  ; r1 = imm11[10:7] << 8 | imm11[6:0] << 1 == imm11 << 1 */
           thumb_rel_or_reg_to_reg(&dest, REG_R1, REG_R2);
 
           /* add r0, r1 */
           thumb_rel_add_reg_to_reg(&dest, REG_R0, REG_R1);
 
-          if ( i == T_BL )
+          if ( i == T_BL_LO )
           {
-            thumb_rel_move_imm_to_reg(&dest, REG_R1, 1);
-            thumb_rel_or_reg_to_reg(&dest, REG_R0, REG_R1); /* Thumb */
+            thumb_rel_move_imm_to_reg(&dest, REG_R1, 1); /* T bit = 1 */
+            thumb_rel_or_reg_to_reg(&dest, REG_R0, REG_R1);
           }
-          else
+          else /* BLX */
           {
             thumb_rel_move_imm_to_reg(&dest, REG_R1, 3);
-            thumb_rel_bic_reg_to_reg(&dest, REG_R0, REG_R1); /* Align 4 */
+            thumb_rel_bic_reg_to_reg(&dest, REG_R0, REG_R1); /* Destination align 4 */
           }
 
-          thumb_rel_store_pc(&dest, REG_R0, stack_delta);
+          thumb_rel_store_next_pc(&dest, REG_R0, stack_delta);
 
           /* pop {r0-r3} */
           thumb_rel_pop_reg(&dest, T_RBIT(REG_R0) | T_RBIT(REG_R1) | T_RBIT(REG_R2) | T_RBIT(REG_R3));
@@ -1042,47 +1121,61 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           tainted_flags = 1;
           break;
 
+        /*
+         *  PC = reg
+         *  LR = next instruction | 1 if BLX
+         *
+         *  Can switch to ARM state.
+         */
         case T_BX:
         case T_BLX_REG:
           if ( idef->link )
-          {
             thumb_rel_adjust_lr(&dest, stack_delta);
 
-            /* LR adjustment is flag destuctive */
-            tainted_flags = 1;
-          }
-
-          new_reg = NEXT_THUMB_REG(idef->operands[0].get(insn));
-          thumb_rel_push_reg(&dest, new_reg);
-          stack_delta += 4;
-
-          thumb_rel_move_reg_to_reg(&dest, new_reg, idef->operands[0].get(insn));
-          thumb_rel_store_pc(&dest, new_reg, stack_delta);
-
-          thumb_rel_pop_reg(&dest, new_reg);
-          stack_delta -= 4;
-          
-          /* Move operation on low registers is flag destructive */
-          if ( !IS_HI_REG(idef->operands[0].get(insn)) )
-            tainted_flags = 1;
-
+          /* Set the new return address */
+          thumb_rel_store_next_pc(&dest, idef->operands[0].get(insn), stack_delta);
           break;
 
+        /* 
+         * PC = reg
+         *  or
+         * PC = PC + reg
+         *
+         * Stay in Thumb state.
+         */
         case T_ADD_HI:
         case T_MOV_HI:
+          /* push {new_reg, new_reg2} */
           new_reg = NEXT_THUMB_REG(idef->operands[1].get(insn));
-          thumb_rel_push_reg(&dest, new_reg);
-          stack_delta += 4;
+          new_reg2 = NEXT_THUMB_REG(new_reg);
+          thumb_rel_push_reg(&dest, T_RBIT(new_reg) | T_RBIT(new_reg2));
+          stack_delta += 8;
 
+          /* mov new_reg, reg */
           thumb_rel_move_reg_to_reg(&dest, new_reg, idef->operands[1].get(insn));
-          thumb_rel_store_pc(&dest, new_reg, stack_delta);
 
-          thumb_rel_pop_reg(&dest, new_reg);
-          stack_delta -= 4;
+          if ( i == T_ADD_HI )
+          {
+            /* ldr new_reg2, [reloc_info.read_pc] */
+            thumb_rel_load_read_pc(&dest, new_reg2, stack_delta);
+            /* add new_reg, new_reg2 */
+            thumb_rel_add_reg_to_reg(&dest, new_reg, new_reg2);
+          }
           
-          /* Move operation on low registers is flag destructive */
-          if ( !IS_HI_REG(idef->operands[1].get(insn)) )
-            tainted_flags = 1;
+          /* mov new_reg2, 1 */
+          new_reg2 = NEXT_THUMB_REG(new_reg);
+          thumb_rel_move_imm_to_reg(&dest, new_reg2, 1);
+
+          /* orr new_reg, new_reg2 (thumb bit) */
+          thumb_rel_or_reg_to_reg(&dest, new_reg, new_reg2);
+
+          /* Save return address */
+          thumb_rel_store_next_pc(&dest, new_reg, stack_delta);
+
+          thumb_rel_pop_reg(&dest, T_RBIT(new_reg) | T_RBIT(new_reg2));
+          stack_delta -= 8;
+          
+          tainted_flags = 1;
           
           break;
       }
@@ -1096,6 +1189,7 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
      *  add reg, pc, imm8
      *  ldr reg, [pc, #imm8]
      *  mov reg, pc
+     *  bl.hi imm11
      */
     else if ( idef->reads_pc || (idef->can_read_pc && idef->operands[1].get(insn) == REG_PC ) )
     {
@@ -1106,8 +1200,8 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
       thumb_rel_push_reg(&dest, T_RBIT(new_reg));
       stack_delta += 4;
 
-      /* ldr new_reg, return_address */
-      thumb_rel_load_pc(&dest, new_reg, stack_delta);
+      /* ldr new_reg, [reloc_info.read_pc] */
+      thumb_rel_load_read_pc(&dest, new_reg, stack_delta);
 
       if ( i == T_LDR_PC_IMM8 )
       {
@@ -1162,6 +1256,54 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
         stack_delta -= 4;
         tainted_flags = 1;
       }
+      else if ( i == T_BL_HI )
+      {
+        /*
+         *  Instruction does:
+         *    LR = PC + (sign_extend(imm11) << 12)
+         */
+        new_reg2 = NEXT_THUMB_REG(new_reg);
+        new_reg3 = NEXT_THUMB_REG(new_reg2);
+        new_reg4 = NEXT_THUMB_REG(new_reg3);
+
+        /* push {new_reg2, new_reg3, new_reg4} */
+        thumb_rel_push_reg(&dest, T_RBIT(new_reg2) | T_RBIT(new_reg3) | T_RBIT(new_reg4));
+        stack_delta += 12;
+
+        /* mov new_reg2, (imm11 & 0xff) ; imm11[7:0] */
+        thumb_rel_move_imm_to_reg(&dest, REG_R1, (idef->operands[0].get(insn) << 1) & 0xff);
+
+        /* mov new_reg3, (imm11 >> 8) & 0xff ; imm11[10:8] */
+        thumb_rel_move_imm_to_reg(&dest, REG_R1, (idef->operands[0].get(insn) >> 7) & 0xff);
+
+        /* mov new_reg4, 8 */
+        thumb_rel_move_imm_to_reg(&dest, REG_R3, 8);
+
+        /* lsl new_reg3, new_reg4 ; */
+        thumb_rel_lsl_reg_to_reg(&dest, REG_R2, REG_R3);
+
+        /* orr new_reg2, new_reg3 */  
+        thumb_rel_or_reg_to_reg(&dest, REG_R1, REG_R2);
+
+        /* mov new_reg4, 21 */
+        thumb_rel_move_imm_to_reg(&dest, REG_R3, 8);
+
+        /* lsl new_reg2, new_reg4 */
+        thumb_rel_lsl_reg_to_reg(&dest, REG_R2, REG_R3);
+
+        /* mov new_reg4, 9 */
+        thumb_rel_move_imm_to_reg(&dest, REG_R3, 20);
+
+        /* asr new_reg2, new_reg4 (sign extend) */
+        thumb_rel_asr_reg_to_reg(&dest, REG_R1, REG_R2);
+
+        /* add lr, new_reg2 */
+        thumb_rel_add_reg_to_reg(&dest, REG_LR, new_reg2);
+
+        /* push {new_reg2, new_reg3, new_reg4} */
+        thumb_rel_pop_reg(&dest, T_RBIT(new_reg2) | T_RBIT(new_reg3) | T_RBIT(new_reg4));
+        stack_delta -= 12;
+      }
       else
       {
         /* replace pc by new_reg in instruction */
@@ -1208,7 +1350,7 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
         case T_ADD_HI:
         case T_MOV_HI:
           return -2;
-        /* TODO: stack modified by register value?? */
+        /* TODO: stack pointer modified by register value?? */
       }
 
       *dest++ = insn;
@@ -1217,16 +1359,25 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
   else
     *dest++ = insn; /* PC/SP independent instruction */
 
-  /* We might have corrupted the flags, restore them if necessary */
+  /* We might have corrupted the CPU flags, restore them if necessary */
   if ( tainted_flags )
     thumb_rel_restore_flags(&dest, stack_delta);
 
+  /* Write the epilogue stub */
   thumb_rel_epilogue(&dest, stack_delta);
   *output_size = (dest - base) * sizeof(thumb_insn);
+
+  /* Invalidates the instruction cache of the relocated buffer */
+  mmu_sync_insn_cache_range(base, *output_size);
 
   return 0;
 }
 
+/*
+ *  Handler to return to a relocated instruction.
+ *  SP points to the saved_context structure.
+ *  Fill up the reloc_info structure, restore registers and pass control to the relocated instruction buffer.
+ */
 void __attribute__((naked)) return_at_relocated_insn(void (* reloc_addr)(void))
 {
   asm(
@@ -1234,27 +1385,42 @@ void __attribute__((naked)) return_at_relocated_insn(void (* reloc_addr)(void))
     "nop\n"
     ".arm\n"
     ".code 32\n"
-    "ldr lr, [sp, #60]\n"           /* Load return address */
-    "str r0, [sp, #60]\n"           /* Set new return at reloc_addr */ 
-    "ldr r11, [sp]\n"               /* Load cpsr */
-    "str lr, [sp]\n"                /* rel_ctrl.pc */
-    "add sp, #4\n"
-    "mov r12, #0\n"
-    "tst r11, %[thumb_flag]\n"      /* thumb instruction ? */
-    "orrne r12, r12, #1\n" 
-    "mov r10, %[cond_flags]\n"
-    "orr r10, %[int_flags]\n"
-    "and r11, r11, r10\n"
-    "ldmfd sp!, {r0-r1}\n"          /* Load r0-r1 */
-    "stmfd sp!, {r11-r12}\n"        /* rel_ctrl.cpsr, rel_ctrl.thumb_bit */
-    "add sp, #8\n"
-    "bic r11, r11, %[thumb_flag]\n"
-    "msr cpsr, r11\n"               /* restore cpsr */ 
-    "ldmfd sp!, {r2-r12, lr, pc}"   /* restore context, jump at relocated instruction */
+    "ldr r8, [sp]\n"                /* r8 = saved_context->cspr */
+    "ldr r9, [sp, #60]\n"           /* r9 = saved_context->pc */
+    "str r0, [sp, #60]\n"           /* saved_context->pc = reloc_addr */ 
+    "mov r7, r8\n"
+    "bic r7, r7, %[thumb_flag]\n"
+    "orr r7, r7, %[int_flags]\n"
+    "msr cpsr_c, r7\n"                /* The following code is NOT reentrant, disable interrupts */
+
+    /* 
+     * Create reloc_info structure on stack.
+     * r9, r10, r11, r12 = reloc_info 
+     */
+    "sub sp, %[stack_shift]\n"
+    "tst r8, %[thumb_flag]\n"       /* thumb instruction ? */
+    "addne r9, #4\n"               /* Reading PC in Thumb mode yields address of instruction + 4 */
+    "addeq r9, #8\n"               /* Reading PC in ARM mode yields address of instruction + 8 */
+    "subne r10, r9, #1\n"          /* Next instruction at (PC + 2) | 1 in Thumb mode */
+    "subeq r10, r9, #4\n"          /* Next instruction at PC + 4 in ARM mode */
+    "mov r11, %[cond_flags]\n"
+    "and r11, r11, r8\n"            /* Keep condition and interrupt status from cspr */
+    "mov r12, %[int_flags]\n"
+    "and r12, r12, r8\n"
+    "add sp, %[reloc_info_size]\n"
+    "stmfd sp!, {r9-r12}\n"        /* Fill { reloc_info.read_pc, reloc_info.next_pc, reloc_info.flags } */
+    "add sp, %[stack_shift]\n"
+
+    /* Restore context and jump to relocated instruction */
+    "add sp, #4\n"                  /* Skip cspr */
+    "msr cpsr_f, r7\n"              /* Restore flags */
+    "ldmfd sp!, {r0-r12, lr, pc}"   /* Restore context, jump at relocated instruction */
     ::
     [thumb_flag] "i" (ARM_SPR_THUMB),
     [cond_flags] "i" (ARM_SPR_COND_FLAGS),
-    [int_flags] "i" (ARM_SPR_MASK_INTS)
+    [int_flags] "i" (ARM_SPR_MASK_INTS),
+    [stack_shift] "i" (STACK_SHIFT - sizeof(saved_context)),
+    [reloc_info_size] "i" (sizeof(reloc_info))
   );
 }
 

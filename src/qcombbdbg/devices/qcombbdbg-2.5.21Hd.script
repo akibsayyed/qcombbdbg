@@ -36,6 +36,9 @@ SECTIONS
   PROVIDE(rex_set_task_signals = 0x137570 | 1);
   PROVIDE(rex_clear_task_signals = 0x13752c | 1);
   PROVIDE(rex_queue_dpc = 0x137a06 | 1);
+  PROVIDE(rex_initialize_critical_section = 0x1370e0 | 1);
+  PROVIDE(rex_enter_critical_section = 0x1371b6 | 1);
+  PROVIDE(rex_leave_critical_section = 0x1374dc | 1);
   PROVIDE(heap_create = 0x5f8090 | 1);
   PROVIDE(heap_malloc = 0x5f857c | 1);
   PROVIDE(heap_free = 0x5f87da | 1);

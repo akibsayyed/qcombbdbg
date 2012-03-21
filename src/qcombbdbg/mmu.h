@@ -48,9 +48,31 @@ typedef union
 #define MMU_SECTION_AP_READ_ONLY 0
 #define MMU_SECTION_AP_READ_WRITE 3
 
-#define MMU_CACHE_CONTROL_SEPARATE (1 << 24)
-#define MMU_CACHE_TYPE_MASK (0xf << 25)
 #define MMU_CACHE_TYPE_WRITE_THROUGH 0
+
+typedef union
+{
+  unsigned int i;
+
+  struct __attribute__((packed))
+  {
+    unsigned int isize_len : 2;
+    unsigned int isize_m : 1;
+    unsigned int isize_assoc : 3;
+    unsigned int isize_size : 3;
+    unsigned int isize_sbz : 3;
+    
+    unsigned int dsize_len : 2;
+    unsigned int dsize_m : 1;
+    unsigned int dsize_assoc : 3;
+    unsigned int dsize_size : 3;
+    unsigned int dsize_sbz : 3;
+
+    unsigned int separate : 1;
+    unsigned int ctype : 4;
+    unsigned int sbz : 3;
+  } bits;
+} cache_type_register;
 
 /* Page protections */
 enum page_access
@@ -101,6 +123,7 @@ int mmu_probe_write(void *, unsigned int);
 int mmu_probe_execute(void *);
 int mmu_set_access_protection(void *, int);
 void mmu_sync_insn_cache_at(void * addr);
+void mmu_sync_insn_cache_range(void * addr, unsigned int);
 
 #endif
 
