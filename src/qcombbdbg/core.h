@@ -293,6 +293,18 @@ typedef struct __attribute__((packed, aligned(4)))
     } tracepoint;
 
     struct __packed {
+      unsigned short id;
+      int value;
+    } tvar;
+
+    struct __packed {
+      void * address;
+      char type;
+      char code[1];
+    } taction;
+
+#ifdef DEBUG
+    struct __packed {
       long long int (* f)(int, int, int, int);
       int arg1;
       int arg2;
@@ -319,16 +331,8 @@ typedef struct __attribute__((packed, aligned(4)))
       void * src;
       void * dst;
     } reloc;
+#endif
 
-    struct __packed {
-      unsigned short id;
-      int value;
-    } tvar;
-
-    struct __packet {
-      void * address;
-      char type;
-    } taction;
   };
 } request_packet;
 
@@ -425,7 +429,7 @@ response_packet * __cmd_remove_tracepoint(void *);
 response_packet * __cmd_enable_tracepoint(void *);
 response_packet * __cmd_disable_tracepoint(void *);
 response_packet * __cmd_get_tracepoint_status(void *);
-response_packet * __cmd_add_tracepoint_action(void *, char);
+response_packet * __cmd_add_tracepoint_action(void *, char, char *, unsigned int);
 response_packet * __cmd_get_tracebuffer_frame(unsigned int);
 
 #endif

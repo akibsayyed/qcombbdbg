@@ -33,110 +33,6 @@
 #define foreach_trace_entry(tf, te) for ( te = tf->entries; te != 0; te = te->next )
 #define foreach_trace_var(tv) for ( tv = tengine.tvars; tv != 0; tv = tv->next )
 
-#define TRACE_OPCODE_NR 0x33
-enum trace_vm_opcodes
-{
-  OP_FLOAT = 1,        /* not implemented */
-  OP_ADD,              
-  OP_SUB,              
-  OP_MUL,              
-  OP_DIVS,             
-  OP_DIVU,
-  OP_REMS,
-  OP_REMU,
-  OP_LSH,
-  OP_RSHS,
-  OP_RSHU,
-  OP_TRACE,
-  OP_TRACE_QUICK,
-  OP_EQZ,               /* equals zero */
-  OP_AND,
-  OP_OR,
-  OP_XOR,
-  OP_NOT,
-  OP_EQ,               /* equals */
-  OP_LTS,              /* less than signed */
-  OP_LTU,              /* less than unsigned */
-  OP_EXT,              /* sign ext */
-  OP_REF8,
-  OP_REF16,
-  OP_REF32,
-  OP_REF64,
-  OP_REF_FLOAT,        /* not implemented */
-  OP_REF_DOUBLE,       /* not implemented */
-  OP_REF_LONG_DOUBLE,  /* not implemented */
-  OP_L2D,              /* not implemented */
-  OP_D2L,              /* not implemented */
-  OP_IF_GOTO,
-  OP_GOTO,
-  OP_CONST8,
-  OP_CONST16,
-  OP_CONST32,
-  OP_CONST64,
-  OP_REG,
-  OP_END,
-  OP_DUP,
-  OP_POP,
-  OP_ZEXT,             /* zero ext */
-  OP_SWAP,
-  OP_GETV,
-  OP_SETV,
-  OP_TRACEV,
-  OP_TRACENZ,
-  OP_TRACE16,
-  OP_UNDEF,
-  OP_PICK,
-  OP_ROT
-};
-
-typedef union
-{
-  int i;
-  unsigned int u;
-  float d;
-} trace_vm_stack_val;
-
-#define TRACE_VM_STACK_SIZE 512
-typedef struct
-{
-  int stack_ptr;
-  trace_vm_stack_val * stack;
-} trace_vm_stack;
-
-/*
- *  The trace action VM control structure.
- */
-typedef struct
-{
-  trace_vm_stack stack;
-  char * base_address;
-  char * pc;
-  context * arm_ctx;
-  char running;
-  char error;
-} trace_vm_state;
-
-/*
- *  Errors which could have been fired during the execution of a trace action.
- */
-enum trace_vm_error
-{
-  TRACE_VM_ERROR_DIV_BY_0 = 1,
-  TRACE_VM_ERROR_INVALID_OPCODE,
-  TRACE_VM_ERROR_NOT_IMPLEMENTED,
-  TRACE_VM_ERROR_INVALID_MEMORY_ACCESS,
-  TRACE_VM_ERROR_INVALID_PC,
-};
-
-typedef void (* trace_vm_opcode_handler_0)(void);
-typedef void (* trace_vm_opcode_handler_1)(int);
-
-typedef union
-{
-  trace_vm_opcode_handler_0 a0;
-  trace_vm_opcode_handler_1 a1;
-} trace_vm_opcode_handler;
-
 /* Registers entry */
 typedef struct __attribute__((packed))
 {
@@ -213,7 +109,7 @@ typedef struct
   unsigned int frame_created;
   unsigned int frame_count;
   trace_frame * frames;
-  trace_frame * current_frame;
+  trace_frame * last_frame;
 } trace_buffer;
 
 /*
@@ -254,13 +150,133 @@ enum trace_stop_reasons
   TRACE_STOP_UNKNOWN
 };
 
+#define TRACE_OPCODE_NR 0x33
+enum trace_vm_opcodes
+{
+  OP_FLOAT = 1,        /* not implemented */
+  OP_ADD,              
+  OP_SUB,              
+  OP_MUL,              
+  OP_DIVS,             
+  OP_DIVU,
+  OP_REMS,
+  OP_REMU,
+  OP_LSH,
+  OP_RSHS,
+  OP_RSHU,
+  OP_TRACE,
+  OP_TRACE_QUICK,
+  OP_EQZ,               /* equals zero */
+  OP_AND,
+  OP_OR,
+  OP_XOR,
+  OP_NOT,
+  OP_EQ,               /* equals */
+  OP_LTS,              /* less than signed */
+  OP_LTU,              /* less than unsigned */
+  OP_EXT,              /* sign ext */
+  OP_REF8,
+  OP_REF16,
+  OP_REF32,
+  OP_REF64,
+  OP_REF_FLOAT,        /* not implemented */
+  OP_REF_DOUBLE,       /* not implemented */
+  OP_REF_LONG_DOUBLE,  /* not implemented */
+  OP_L2D,              /* not implemented */
+  OP_D2L,              /* not implemented */
+  OP_IF_GOTO,
+  OP_GOTO,
+  OP_CONST8,
+  OP_CONST16,
+  OP_CONST32,
+  OP_CONST64,
+  OP_REG,
+  OP_END,
+  OP_DUP,
+  OP_POP,
+  OP_ZEXT,             /* zero ext */
+  OP_SWAP,
+  OP_GETV,
+  OP_SETV,
+  OP_TRACEV,
+  OP_TRACENZ,
+  OP_TRACE16,
+  OP_UNDEF,
+  OP_PICK,
+  OP_ROT
+};
+
+typedef union
+{
+  int i;
+  unsigned int u;
+  float d;
+} trace_vm_stack_val;
+
+#define TRACE_VM_STACK_SIZE 512
+typedef struct
+{
+  int stack_ptr;
+  trace_vm_stack_val * stack;
+} trace_vm_stack;
+
+/*
+ *  The trace action VM control structure.
+ */
+typedef struct
+{
+  /* The VM stack */
+  trace_vm_stack stack;
+
+  /* The VM bytecode address */
+  char * base_address;
+
+  /* The current instruction address */
+  char * pc;
+
+  /* The real CPU context */
+  context * arm_ctx;
+
+  /* VM running state */
+  char running;
+
+  /* Last error */
+  char error;
+
+  /* Associated trace frame in the trace buffer */
+  trace_frame * frame;
+} trace_vm_state;
+
+/*
+ *  Errors which could have been fired during the execution of a trace action.
+ */
+enum trace_vm_error
+{
+  TRACE_VM_ERROR_DIV_BY_0 = 1,
+  TRACE_VM_ERROR_INVALID_OPCODE,
+  TRACE_VM_ERROR_NOT_IMPLEMENTED,
+  TRACE_VM_ERROR_INVALID_PC,
+  TRACE_VM_ERROR_INVALID_MEMORY_ACCESS,
+  TRACE_VM_ERROR_UNKNOWN
+};
+
+#define DEFINE_OPCODE_HANDLER(opcode, ...) void trace_op_##opcode(trace_vm_state * state, ##__VA_ARGS__)
+
+typedef void (* trace_vm_opcode_handler_0)(trace_vm_state *);
+typedef void (* trace_vm_opcode_handler_1)(trace_vm_state *, int);
+
+typedef union
+{
+  trace_vm_opcode_handler_0 a0;
+  trace_vm_opcode_handler_1 a1;
+} trace_vm_opcode_handler;
+
 /*
  *  The main trace engine control structure.
  */
 typedef struct
 {
   char status;
-  trace_vm_state vm;
   trace_variable * tvars; 
   trace_buffer tbuffer;
   //rex_critical_section critical_section;
@@ -270,6 +286,12 @@ void trace_engine_init(void);
 void trace_buffer_clear(void);
 void trace_start(void);
 void trace_stop(char);
+
+trace_vm_state * trace_vm_state_create(saved_context *, trace_frame *);
+void trace_vm_state_destroy(trace_vm_state *);
+int trace_vm_exec(trace_vm_state *, char *, unsigned int);
+int trace_vm_eval(trace_vm_state *, char *, unsigned int, int *);
+
 unsigned int trace_frame_get_size(trace_frame *);
 unsigned int trace_entry_get_size(trace_entry *);
 trace_frame * trace_buffer_create_frame(breakpoint*);

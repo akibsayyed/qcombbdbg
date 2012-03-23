@@ -740,18 +740,34 @@ int dbg_read_memory(void * start, void * out,  unsigned int size)
 int dbg_tracepoint_do_action(trace_action * action, trace_frame * tframe, saved_context * ctx)
 {
   int ret;
+  trace_vm_state * state;
 
   ret = 0;
+  state = 0;
   switch ( action->type )
   {
     case TRACEPOINT_ACTION_COLLECT_REGS:
       ret = trace_buffer_trace_registers(tframe, ctx);
       break;
 
-    case TRACEPOINT_ACTION_COLLECT_MEM:
-      ret = trace_buffer_trace_memory(tframe, action->collect_mem.addr, action->collect_mem.size);
+    case TRACEPOINT_ACTION_EXEC_GDB:
+      state = trace_vm_state_create(ctx, tframe);
+      if ( !state )
+      {
+        trace_stop(ret = TRACE_STOP_DISCONNECTED);
+        break;
+      }
+
+      ret = trace_vm_exec(state, action->exec.code, action->exec.size);
+      break;
+
+    default:
+      trace_stop(ret = TRACE_STOP_UNKNOWN);
       break;
   }
+
+  if ( state )
+    trace_vm_state_destroy(state);
 
   return ret;
 }
@@ -781,7 +797,6 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
   trace_action * action;
   trace_frame * tframe;
 
-
   /* 
    * Ignore trace calls from the debugger itself ! 
    * TODO: irq-safe tracepoints ?
@@ -793,7 +808,7 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
     if ( tp->trace.pass != 0 && tp->trace.hits >= tp->trace.pass )
     {
       dbg_disable_tracepoint(tp);
-      if ( !dbg_any_tracepoint_alive() )
+      if ( tengine.status == 0 && !dbg_any_tracepoint_alive() )
         tengine.status = TRACE_STOP_NO_MORE_PASS;
     }
 
@@ -802,7 +817,7 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
 
     /* Execute tracepoint actions */
     foreach_tracepoint_action(tp, action)
-      if ( dbg_tracepoint_do_action(action, tframe, ctx) < 0 )
+      if ( dbg_tracepoint_do_action(action, tframe, ctx) )
         break;
 
     //rex_leave_critical_section(&tengine.critical_section);
@@ -1529,6 +1544,9 @@ response_packet * __cmd_disable_tracepoint(void * address)
   if ( tp )
   {
     dbg_disable_tracepoint(tp);
+    if ( tengine.status == 0 && !dbg_any_tracepoint_alive() )
+      tengine.status = TRACE_STOP_NO_MORE_PASS;
+
     ret = 0;
   }
   else
@@ -1567,7 +1585,7 @@ response_packet * __cmd_get_tracepoint_status(void * address)
   return response;
 }
 
-response_packet * __cmd_add_tracepoint_action(void * address, char type)
+response_packet * __cmd_add_tracepoint_action(void * address, char type, char * code, unsigned int size)
 {
   response_packet * response;
   breakpoint * tp;
@@ -1592,6 +1610,19 @@ response_packet * __cmd_add_tracepoint_action(void * address, char type)
   switch ( type )
   {
     case TRACEPOINT_ACTION_COLLECT_REGS: 
+      break;
+
+    case TRACEPOINT_ACTION_EXEC_GDB:
+    case TRACEPOINT_ACTION_EXEC_NATIVE:
+      action->exec.code = malloc(size);
+      if ( !action->exec.code )
+      {
+        response->error_code = ERROR_NO_MEMORY_AVAILABLE;
+        free(action);
+        break;
+      }
+      __memcpy(action->exec.code, code, size);
+      action->exec.size = size;
       break;
 
     default:

@@ -142,7 +142,12 @@ response_packet * __cmd_dispatcher(request_packet * packet, int size)
       break;
 
     case CMD_ADD_TRACEPOINT_ACTION:
-      response = __cmd_add_tracepoint_action(packet->taction.address, packet->taction.type);
+      response = __cmd_add_tracepoint_action(
+        packet->taction.address, 
+        packet->taction.type, 
+        packet->taction.code, 
+        size - __builtin_offsetof(request_packet, taction.code)
+      );
       break;
 
     case CMD_GET_TRACE_FRAME:

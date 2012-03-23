@@ -128,6 +128,7 @@ class Tracepoint
   end
 
   attr_reader :addr, :pass, :condition, :actions, :src
+  attr_accessor :enabled
 
   def initialize(addr, pass, condition = nil)
     @addr = addr
@@ -135,6 +136,7 @@ class Tracepoint
     @condition = condition
     @actions = []
     @src = []
+    @enabled = true
   end
 end
 
@@ -160,6 +162,19 @@ class TraceBuffer
     def get_registers
       @entries.find { |entry| entry.is_a? Registers }
     end
+
+    def read_memory(addr, size)
+      requested_range = (addr...addr+size)
+      mem_entries = @entries.find_all { |entry| entry.is_a?(Memory) }
+      
+      mem_entries.each do |mem|
+        if mem.range === addr
+          return mem.data[addr - mem.address, size]
+        end
+      end
+
+      nil
+    end
   end
 
   class Registers < Array
@@ -173,6 +188,14 @@ class TraceBuffer
     def initialize(address, data)
       @address = address
       @data = data
+    end
+
+    def size
+      @data.size
+    end
+
+    def range
+      @address...(@address + @data.size)
     end
 
     def dump
@@ -262,7 +285,8 @@ class GdbProxy
     'QNonStop',
     'QStartNoAckMode',
     'qXfer:features:read',
-    'qXfer:threads:read'
+    'qXfer:threads:read',
+    'EnableDisableTracepoints'
   ]
 
   def initialize(port, tty)
@@ -404,6 +428,10 @@ class GdbProxy
             info[:tfull] = 0
           when TraceStop::DISCONNECTED
             info[:tdisconnected] = 0
+          when TraceStop::NO_MORE_PASS
+            info[:tpasscount] = 0
+          when TraceStop::ERROR
+            info[:terror] = 0
         else
           info[:tunknown] = 0
         end
@@ -473,8 +501,8 @@ class GdbProxy
     dbg_send_cmd(Commands::INSERT_TP, [ addr, :u32 ], [ kind, :u8 ], [ pass, :u32 ])
   end
 
-  def dbg_add_tracepoint_action(addr, type)
-    dbg_send_cmd(Commands::ADD_TP_ACTION, [ addr, :u32 ], [ type, :u8 ])
+  def dbg_add_tracepoint_action(addr, type, *args)
+    dbg_send_cmd(Commands::ADD_TP_ACTION, [ addr, :u32 ], [ type, :u8 ], *args)
   end
 
   def dbg_enable_tracepoint(addr)
@@ -730,7 +758,7 @@ class GdbProxy
         @tracepoints.each_pair do |id, tp|
           dbg_insert_tracepoint(tp.addr, CpuState::THUMB, tp.pass)
           tp.actions.each do |action|
-            dbg_add_tracepoint_action(tp.addr, action)
+            dbg_add_tracepoint_action(tp.addr, action[0], *action[1..-1])
           end
         end
         dbg_send_cmd(Commands::TRACE_START)
@@ -753,14 +781,13 @@ class GdbProxy
       when /^qTfV/, /^qTfP/, /^qTsV/, /^qTsP/
         send_packet 'l' # TODO
 
-      when /QTDP:([^-]+):(.+):(.+):(.+):(.+)(:X(.+),(.+))?-?$/
+      when /QTDP:([^-]+):(.+):(E|D):(.+):(.+)(:X(.+),(.+))?-?$/
         n = $1.hex
         addr = $2.hex
         step = $4.hex
         pass = $5.hex
         condition = $8.hex if $6
 
-        print step
         fail "Stepping tracepoints are not supported" if step != 0
 
         @tracepoints[n] = Tracepoint.new(addr, pass, condition)
@@ -773,15 +800,15 @@ class GdbProxy
           case type = actions.getch
             when 'R'
               mask = actions.scan /[0-9a-fA-F]+/
-              @tracepoints[n].actions << Tracepoint::Actions::COLLECT_REGS
+              @tracepoints[n].actions << [ Tracepoint::Actions::COLLECT_REGS ]
             
             #when 'M'
             #  actions.scan /[0-9a-fA-F]+,[0-9a-fA-F]+,[0-9a-fA-F]+/
 
             when 'X'
-              actions.scan /[0-9a-fA-F]+,[0-9a-fA-F]+/
-              code = [ actions[1] ].pack('H*')
-              @tracepoints[n].actions << [ :X, code ]
+              actions.scan /([0-9a-fA-F]+),([0-9a-fA-F]+)/
+              code = [ actions[2] ].pack('H*')
+              @tracepoints[n].actions << [ Tracepoint::Actions::EXEC_GDB , [code, :blob] ]
 
             else
               fail "Bad QTDP packet : #{type}"
@@ -856,7 +883,12 @@ class GdbProxy
         #end
 
       when /^m(.+),(.+)/
-        data = dbg_read_memory($1.hex, $2.hex)
+        if @current_frame
+          data = @current_frame.read_memory($1.hex, $2.hex)
+        else
+          data = dbg_read_memory($1.hex, $2.hex)
+        end
+
         if data
           send_packet(data.unpack('H*')[0])
         else

@@ -49,7 +49,6 @@ int are_registers_collected(trace_frame * tframe)
 
 void trace_start(void)
 {
-  tengine.vm.running = 0;
   tengine.status = 0;
   dbg_enable_all_tracepoints();
 }
@@ -60,17 +59,17 @@ void trace_start(void)
 void trace_stop(char stop_reason)
 {
   dbg_disable_all_tracepoints();
-  tengine.vm.running = 0;
   tengine.status = stop_reason;
 }
 
 /*
  *  An error occured during a trace action.
  */
-void trace_error(char error)
+void trace_vm_error(trace_vm_state * state, char error)
 {
   trace_stop(TRACE_STOP_ERROR);
-  tengine.vm.error = error;
+  state->running = 0;
+  state->error = error;
 }
 
 /*
@@ -166,6 +165,7 @@ int trace_frame_add_entry(trace_frame * tframe, trace_entry * tentry)
   if ( size + tengine.tbuffer.used > tengine.tbuffer.size )
   {
     free(tentry);
+    trace_stop(TRACE_STOP_BUFFER_FULL);
     return TRACE_STOP_BUFFER_FULL;
   }
 
@@ -216,12 +216,13 @@ int trace_buffer_trace_memory(trace_frame * tframe, void * address, unsigned sho
 
   tentry = malloc(__builtin_offsetof(trace_entry, entry.mem.data) + length);
   tentry->type = TRACE_ENTRY_MEM;
+  tentry->entry.mem.address = address;
   tentry->entry.mem.length = length;
 
   if ( dbg_read_memory(address, &tentry->entry.mem.data, length) )
   {
     free(tentry);
-    trace_error(TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
+    trace_stop(TRACE_STOP_ERROR);
     return TRACE_STOP_ERROR;
   }
 
@@ -231,7 +232,7 @@ int trace_buffer_trace_memory(trace_frame * tframe, void * address, unsigned sho
 /*
  *  Records the value of the variable in the trace buffer.
  */
-int trace_buffer_trace_variable(unsigned short id)
+int trace_buffer_trace_variable(trace_frame * tframe, unsigned short id)
 {
   trace_variable * tvar;
   trace_entry * tentry;
@@ -249,8 +250,7 @@ int trace_buffer_trace_variable(unsigned short id)
   else
     tentry->entry.var.value = tvar->value;
 
-  /* XXX: CONCURRENCY ??? */
-  return trace_frame_add_entry(tengine.tbuffer.current_frame, tentry);
+  return trace_frame_add_entry(tframe, tentry);
 }
 
 /*
@@ -298,12 +298,12 @@ trace_frame * trace_buffer_create_frame(breakpoint * tp)
   tframe->entries = 0;
   tframe->next = 0;
 
-  if ( tengine.tbuffer.current_frame )
-    tengine.tbuffer.current_frame->next = tframe;
+  if ( tengine.tbuffer.last_frame )
+    tengine.tbuffer.last_frame->next = tframe;
   else
     tengine.tbuffer.frames = tframe;
   
-  tengine.tbuffer.current_frame = tframe;
+  tengine.tbuffer.last_frame = tframe;
   tengine.tbuffer.frame_created++;
   tengine.tbuffer.frame_count++;
 
@@ -334,43 +334,81 @@ void trace_buffer_clear(void)
   }
 
   tengine.tbuffer.size = TRACE_BUFFER_DEFAULT_SIZE;
-  tengine.tbuffer.current_frame = 0;
+  tengine.tbuffer.last_frame = 0;
   tengine.tbuffer.frames = 0;
   tengine.tbuffer.frame_created = 0;
   tengine.tbuffer.frame_count = 0;
   tengine.tbuffer.used = 0;
 }
 
-void trace_vm_init(void)
+/*
+ *  Creates a new VM context.
+ */
+trace_vm_state * trace_vm_state_create(saved_context * saved_ctx, trace_frame * tframe)
 {
-  tengine.vm.base_address = 0;
-  tengine.vm.pc = 0;
-  tengine.vm.running = 0;
-  tengine.vm.error = 0;
-  tengine.vm.arm_ctx = 0;
+  trace_vm_state * state;
 
-  tengine.vm.stack.stack = malloc(TRACE_VM_STACK_SIZE * sizeof(trace_vm_stack_val));
-  tengine.vm.stack.stack_ptr = 0;
+  state = malloc(sizeof(trace_vm_state));
+  if ( !state )
+    return 0;
+
+  state->arm_ctx = malloc(sizeof(context));
+  if ( !state->arm_ctx )
+  {
+    free(state);
+    return 0;
+  }
+
+  state->stack.stack = malloc(TRACE_VM_STACK_SIZE * sizeof(trace_vm_stack_val));
+  if ( !state->stack.stack )
+  {
+    free(state->arm_ctx);
+    free(state);
+    return 0;
+  }
+
+  __memcpy(state->arm_ctx, saved_ctx, sizeof(saved_context));
+  state->arm_ctx->sp = (int)(saved_ctx + 1);
+  state->base_address = 0;
+  state->pc = 0;
+  state->running = 0;
+  state->error = 0;
+  state->stack.stack_ptr = 0;
+  state->frame = tframe;
+
+  return state;
 }
 
+/*
+ *  Destroys a VM context.
+ */
+void trace_vm_state_destroy(trace_vm_state * state)
+{
+  free(state->arm_ctx);
+  free(state->stack.stack);
+  free(state);
+}
+
+/*
+ *  Initializes the trace engine.
+ */
 void trace_engine_init(void)
 {
   tengine.status = TRACE_STOP_NOT_RUN;
   //rex_initialize_critical_section(&tengine.critical_section);
-  //trace_vm_init();
   trace_buffer_clear();
 }
 
-#define PUSH(v) tengine.vm.stack.stack[tengine.vm.stack.stack_ptr++] = (trace_vm_stack_val)(v)
-#define POP tengine.vm.stack.stack[--tengine.vm.stack.stack_ptr]
-#define PEEK(n) tengine.vm.stack.stack[tengine.vm.stack.stack_ptr - n - 1]
+#define PUSH(v) state->stack.stack[state->stack.stack_ptr++] = (trace_vm_stack_val)(v)
+#define POP state->stack.stack[--state->stack.stack_ptr]
+#define PEEK(n) state->stack.stack[state->stack.stack_ptr - n - 1]
 
-void trace_op_not_implemented(void)
+DEFINE_OPCODE_HANDLER(not_implemented)
 {
-  trace_error(TRACE_VM_ERROR_NOT_IMPLEMENTED);
+  trace_vm_error(state, TRACE_VM_ERROR_NOT_IMPLEMENTED);
 }
 
-void trace_op_add(void)
+DEFINE_OPCODE_HANDLER(add)
 {
   int a, b;
 
@@ -378,7 +416,7 @@ void trace_op_add(void)
   PUSH(a + b);
 }
 
-void trace_op_sub(void)
+DEFINE_OPCODE_HANDLER(sub)
 {
   int a, b;
 
@@ -386,7 +424,7 @@ void trace_op_sub(void)
   PUSH(a - b);
 }
 
-void trace_op_mul(void)
+DEFINE_OPCODE_HANDLER(mul)
 {
   int a, b;
 
@@ -394,51 +432,51 @@ void trace_op_mul(void)
   PUSH(a * b);
 }
 
-void trace_op_divs(void)
+DEFINE_OPCODE_HANDLER(divs)
 {
   int a, b;
 
   b = POP.i; a = POP.i;
   if ( !b )
-    return trace_error(TRACE_VM_ERROR_DIV_BY_0);
+    return trace_vm_error(state, TRACE_VM_ERROR_DIV_BY_0);
 
   PUSH(a / b);
 }
 
-void trace_op_divu(void)
+DEFINE_OPCODE_HANDLER(divu)
 {
   unsigned int a, b;
 
   b = POP.u; a = POP.u;
   if ( !b )
-    return trace_error(TRACE_VM_ERROR_DIV_BY_0);
+    return trace_vm_error(state, TRACE_VM_ERROR_DIV_BY_0);
 
   PUSH(a / b);
 }
 
-void trace_op_rems(void)
+DEFINE_OPCODE_HANDLER(rems)
 {
   int a, b;
 
   b = POP.i; a = POP.i;
   if ( !b )
-    return trace_error(TRACE_VM_ERROR_DIV_BY_0);
+    return trace_vm_error(state, TRACE_VM_ERROR_DIV_BY_0);
 
   PUSH(a % b);
 }
 
-void trace_op_remu(void)
+DEFINE_OPCODE_HANDLER(remu)
 {
   unsigned int a, b;
 
   b = POP.u; a = POP.u;
   if ( !b )
-    return trace_error(TRACE_VM_ERROR_DIV_BY_0);
+    return trace_vm_error(state, TRACE_VM_ERROR_DIV_BY_0);
 
   PUSH(a % b);
 }
 
-void trace_op_lsh(void)
+DEFINE_OPCODE_HANDLER(lsh)
 {
   int a, b;
 
@@ -446,7 +484,7 @@ void trace_op_lsh(void)
   PUSH(a << b);
 }
 
-void trace_op_rshs(void)
+DEFINE_OPCODE_HANDLER(rshs)
 {
   int a, b;
 
@@ -454,7 +492,7 @@ void trace_op_rshs(void)
   PUSH(a >> b);
 }
 
-void trace_op_rshu(void)
+DEFINE_OPCODE_HANDLER(rshu)
 {
   unsigned int a, b;
 
@@ -462,25 +500,29 @@ void trace_op_rshu(void)
   PUSH(a >> b);
 }
 
-void trace_op_trace_quick(int size)
+DEFINE_OPCODE_HANDLER(trace_quick, int size)
 {
   void * addr;
   addr = (void *)POP.i;
   
-  //trace_buffer_trace_memory(addr, size);
+  if ( trace_buffer_trace_memory(state->frame, addr, size) )
+  {
+    state->running = 0;
+    state->error = TRACE_VM_ERROR_UNKNOWN;
+  }
 }
 
-void trace_op_trace(void)
+DEFINE_OPCODE_HANDLER(trace)
 {
-  trace_op_trace_quick(POP.i);
+  trace_op_trace_quick(state, POP.i);
 }
 
-void trace_op_eqz(void)
+DEFINE_OPCODE_HANDLER(eqz)
 {
   PUSH(POP.i == 0);
 }
 
-void trace_op_and(void)
+DEFINE_OPCODE_HANDLER(and)
 {
   int a, b;
 
@@ -488,7 +530,7 @@ void trace_op_and(void)
   PUSH(a & b);
 }
 
-void trace_op_or(void)
+DEFINE_OPCODE_HANDLER(or)
 {
   int a, b;
 
@@ -496,7 +538,7 @@ void trace_op_or(void)
   PUSH(a | b);
 }
 
-void trace_op_xor(void)
+DEFINE_OPCODE_HANDLER(xor)
 {
   int a, b;
 
@@ -504,12 +546,12 @@ void trace_op_xor(void)
   PUSH(a ^ b);
 }
 
-void trace_op_not(void)
+DEFINE_OPCODE_HANDLER(not)
 {
   PUSH(~POP.i);
 }
 
-void trace_op_eq(void)
+DEFINE_OPCODE_HANDLER(eq)
 {
   int a, b;
 
@@ -517,7 +559,7 @@ void trace_op_eq(void)
   PUSH(a == b);
 }
 
-void trace_op_lts(void)
+DEFINE_OPCODE_HANDLER(lts)
 {
   int a, b;
 
@@ -525,7 +567,7 @@ void trace_op_lts(void)
   PUSH(a < b);
 }
 
-void trace_op_ltu(void)
+DEFINE_OPCODE_HANDLER(ltu)
 {
   unsigned int a, b;
 
@@ -533,7 +575,7 @@ void trace_op_ltu(void)
   PUSH(a < b);
 }
 
-void trace_op_ext(int n)
+DEFINE_OPCODE_HANDLER(ext, int n)
 {
   int a, s;
 
@@ -543,87 +585,87 @@ void trace_op_ext(int n)
   PUSH((a << s) >> s);
 }
 
-void trace_op_ref8(void)
+DEFINE_OPCODE_HANDLER(ref8)
 {
   unsigned char * addr;
 
   addr = (unsigned char *)POP.u;
   if ( !mmu_probe_read(addr, 1) )
-    return trace_error(TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
+    return trace_vm_error(state, TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
 
   PUSH((unsigned int)*addr);
 }
 
-void trace_op_ref16(void)
+DEFINE_OPCODE_HANDLER(ref16)
 {
   unsigned short * addr;
 
   addr = (unsigned short *)POP.u;
   if ( !mmu_probe_read(addr, 2) )
-    return trace_error(TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
+    return trace_vm_error(state, TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
 
   PUSH((unsigned int)*addr);
 }
 
-void trace_op_ref32(void)
+DEFINE_OPCODE_HANDLER(ref32)
 {
   unsigned int * addr;
 
   addr = (unsigned int *)POP.u;
   if ( !mmu_probe_read(addr, 4) )
-    return trace_error(TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
+    return trace_vm_error(state, TRACE_VM_ERROR_INVALID_MEMORY_ACCESS);
 
   PUSH(*addr);
 }
 
-void trace_op_goto(int offset)
+DEFINE_OPCODE_HANDLER(goto, int offset)
 {
-  tengine.vm.pc = tengine.vm.base_address + offset;
+  state->pc = state->base_address + offset;
 }
 
-void trace_op_if_goto(int offset)
+DEFINE_OPCODE_HANDLER(if_goto, int offset)
 {
   if ( POP.i )
-    trace_op_goto(offset);
+    trace_op_goto(state, offset);
 }
 
-void trace_op_const(int c)
+DEFINE_OPCODE_HANDLER(const, int c)
 {
   PUSH(c);
 }
 
-void trace_op_pop(void)
+DEFINE_OPCODE_HANDLER(pop)
 {
   (void)POP.i;
 }
 
-void trace_op_reg(int n)
+DEFINE_OPCODE_HANDLER(reg, int n)
 {
   int reg;
 
   if ( n == 25 )  /* cspr */
-    reg = tengine.vm.arm_ctx->saved_ctx.spsr;
+    reg = state->arm_ctx->saved_ctx.spsr;
   else if ( n < 13 ) /* r0-r12 */
-    reg = ((int *)tengine.vm.arm_ctx)[n + 1];
+    reg = ((int *)state->arm_ctx)[n + 1];
   else if ( n == 13 ) /* sp */
-    reg = tengine.vm.arm_ctx->sp;
+    reg = state->arm_ctx->sp;
   else /* lr, pc */
-    reg = ((int *)tengine.vm.arm_ctx)[n];
+    reg = ((int *)state->arm_ctx)[n];
 
   PUSH(reg);
 }
 
-void trace_op_end(void)
+DEFINE_OPCODE_HANDLER(end)
 {
-  tengine.vm.running = 0;
+  state->running = 0;
 }
 
-void trace_op_dup(void)
+DEFINE_OPCODE_HANDLER(dup)
 {
   PUSH(PEEK(0).i);
 }
 
-void trace_op_zext(int n)
+DEFINE_OPCODE_HANDLER(zext, int n)
 {
   unsigned int a, s;
 
@@ -633,7 +675,7 @@ void trace_op_zext(int n)
   PUSH((a << s) >> s);
 }
 
-void trace_op_swap(void)
+DEFINE_OPCODE_HANDLER(swap)
 {
   int a, b;
 
@@ -642,7 +684,7 @@ void trace_op_swap(void)
   PUSH(a);
 }
 
-void trace_op_getv(int n)
+DEFINE_OPCODE_HANDLER(getv, int n)
 {
   trace_variable * tvar;
 
@@ -656,32 +698,37 @@ void trace_op_getv(int n)
   }
 }
 
-void trace_op_setv(int n)
+DEFINE_OPCODE_HANDLER(setv, int n)
 {
   trace_set_variable(n, PEEK(0).i);
 }
 
-void trace_op_tracev(int n)
+DEFINE_OPCODE_HANDLER(tracev, int n)
 {
-  trace_buffer_trace_variable(n);
+  if ( trace_buffer_trace_variable(state->frame, n) )
+  {
+    state->running = 0;
+    state->error = TRACE_VM_ERROR_UNKNOWN;
+  }
 }
 
-void trace_op_tracenz(void)
+DEFINE_OPCODE_HANDLER(tracenz)
 {
   /* TODO */
+  trace_vm_error(state, TRACE_VM_ERROR_NOT_IMPLEMENTED);
 }
 
-void trace_op_trace16(int size)
+DEFINE_OPCODE_HANDLER(trace16, int size)
 {
-  trace_op_trace_quick(size);
+  trace_op_trace_quick(state, size);
 }
 
-void trace_op_pick(int n)
+DEFINE_OPCODE_HANDLER(pick, int n)
 {
   PUSH(PEEK(n).i);
 }
 
-void trace_op_rot(void)
+DEFINE_OPCODE_HANDLER(rot)
 {
   int a, b, c;
 
@@ -746,28 +793,30 @@ trace_vm_opcode_handler trace_vm_opcode_table[TRACE_OPCODE_NR + 1] =
   [OP_ROT] = trace_op_rot
 };
 
-int trace_vm_exec(char * bytecode, unsigned int size, context * arm_ctx)
+/*
+ *  Executes GDB bytecode into the given VM context.
+ */
+int trace_vm_exec(trace_vm_state * state, char * bytecode, unsigned int size)
 {
-  int arg;
+  unsigned int arg;
   unsigned char opcode;
 
-  tengine.vm.base_address = tengine.vm.pc = bytecode;
-  tengine.vm.arm_ctx = arm_ctx;
-  tengine.vm.running = 1;
+  state->base_address = state->pc = bytecode;
+  state->running = 1;
 
-  while ( tengine.vm.running )
+  while ( state->running )
   {
-    if ( (unsigned int)tengine.vm.pc < (unsigned int)tengine.vm.base_address ||
-         (unsigned int)tengine.vm.pc >= (unsigned int)tengine.vm.base_address + size )
+    if ( (unsigned int)state->pc < (unsigned int)state->base_address ||
+         (unsigned int)state->pc >= (unsigned int)state->base_address + size )
     {
-      trace_error(TRACE_VM_ERROR_INVALID_PC);
+      trace_vm_error(state, TRACE_VM_ERROR_INVALID_PC);
       break;
     }
 
-    opcode = *tengine.vm.pc++;
+    opcode = *(state->pc++);
     if ( opcode < 1 || opcode > TRACE_OPCODE_NR )
     {
-      trace_error(TRACE_VM_ERROR_INVALID_OPCODE);
+      trace_vm_error(state, TRACE_VM_ERROR_INVALID_OPCODE);
       break;
     }
 
@@ -778,8 +827,8 @@ int trace_vm_exec(char * bytecode, unsigned int size, context * arm_ctx)
       case OP_CONST8:
       case OP_PICK:
       case OP_TRACE_QUICK:
-        arg = *tengine.vm.pc++;
-        trace_vm_opcode_table[opcode].a1(arg);      
+        arg = *(state->pc++);
+        trace_vm_opcode_table[opcode].a1(state, arg);
         break;
 
       case OP_CONST16:
@@ -790,23 +839,40 @@ int trace_vm_exec(char * bytecode, unsigned int size, context * arm_ctx)
       case OP_SETV:
       case OP_TRACE16:
       case OP_TRACEV:
-        arg = *(short *)tengine.vm.pc;
-        tengine.vm.pc += sizeof(short);
-        trace_vm_opcode_table[opcode].a1(arg);      
+        arg = 0;
+        arg |= *(state->pc++) << 8;
+        arg |= *(state->pc++);
+        trace_vm_opcode_table[opcode].a1(state, arg);
         break;
        
       case OP_CONST32:
-        arg = *(int *)tengine.vm.pc;
-        tengine.vm.pc += sizeof(int);
-        trace_vm_opcode_table[opcode].a1(arg);      
+        arg = 0;
+        arg |= *(state->pc++) << 24;
+        arg |= *(state->pc++) << 16;
+        arg |= *(state->pc++) << 8;
+        arg |= *(state->pc++);
+        trace_vm_opcode_table[opcode].a1(state, arg);
         break;
 
       default:
-        trace_vm_opcode_table[opcode].a0();      
+        trace_vm_opcode_table[opcode].a0(state);
         break;
     }
   }
 
-  return PEEK(0).i;
+  return state->error;
+}
+
+/*
+ *  Executes GDB bytecode into the given VM context.
+ *  Returns top of stack in result.
+ */
+int trace_vm_eval(trace_vm_state * state, char * bytecode, unsigned int size, int * result)
+{
+  if ( trace_vm_exec(state, bytecode, size) );
+    return state->error;
+
+  *result = PEEK(0).i;
+  return 0;
 }
 
