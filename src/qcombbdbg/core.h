@@ -224,6 +224,7 @@ typedef struct __packed _breakpoint
   union __packed {
     struct __packed {
       char enabled;
+      char processing;
       unsigned int hits;
       unsigned int pass;
       trace_action * actions;

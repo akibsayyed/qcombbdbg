@@ -329,8 +329,6 @@ void __attribute__((naked)) undefined_instruction_handler(void)
 void __attribute__((naked)) reset_handler(void)
 {
   ARM_ASSEMBLY(
-    ".arm\n"
-    ".code 32\n"
     "stmfd sp!, {lr}\n"             /* store return address (UNPREDICTABLE) */
     "stmfd sp!, {r0-r12, lr}\n"     /* store lr_supervisor (UNPREDICTABLE), r1-r12 */
     "mrs r1, spsr\n"
@@ -379,5 +377,21 @@ void restore_interrupt_handlers(void)
 
     mmu_enable();
   );
+}
+
+/*
+ *  Sets byte to value and returns previous value.
+ */
+inline char xchg_b(char * p, char value)
+{
+  int prev_value;
+
+  ARM_ASSEMBLY(
+    "swpb %0, %1, [%2]\n", 
+    : "=&r" (prev_value)
+    : "r" (value), "r" (p)
+  );
+
+  return prev_value;
 }
 

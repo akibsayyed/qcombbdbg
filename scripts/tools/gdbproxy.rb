@@ -219,6 +219,10 @@ class TraceBuffer
     @frames = []
   end
 
+  def clear
+    @frames.clear
+  end
+
   def dump
     buffer = ''
     @frames.each do |frame|
@@ -291,6 +295,8 @@ class GdbProxy
 
   def initialize(port, tty)
     @gdbsrv = TCPServer.new('localhost', port) 
+    #out = File.open('gdbproxy.log', 'w')
+    #@diag = DiagTaskClient.new(tty, out)
     @diag = DiagTaskClient.new(tty, STDERR)
 
     @diag.wait_for_async_packets do |event|
@@ -398,6 +404,8 @@ class GdbProxy
   end
 
   def dbg_detach
+    @tracepoints.clear
+    @tracebuffer.clear
     dbg_send_cmd(Commands::DETACH)
   end
 
@@ -925,7 +933,7 @@ class GdbProxy
         end
 
       when /^g/
-        if @current_frame
+        if @current_frame #and @current_frame.entries.find{|entry| entry.is_a? TraceBuffer::Registers}
           regs = @current_frame.get_registers
         else
           regs = dbg_get_registers(@current_task)

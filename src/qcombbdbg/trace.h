@@ -110,6 +110,8 @@ typedef struct
   unsigned int frame_count;
   trace_frame * frames;
   trace_frame * last_frame;
+
+  rex_critical_section crit_sect;
 } trace_buffer;
 
 /*
@@ -279,7 +281,6 @@ typedef struct
   char status;
   trace_variable * tvars; 
   trace_buffer tbuffer;
-  //rex_critical_section critical_section;
 } trace_engine;
 
 void trace_engine_init(void);

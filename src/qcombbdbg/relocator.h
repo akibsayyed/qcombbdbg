@@ -119,7 +119,7 @@ enum arm_conditions
 };
 
 #define REVERSE_COND(cond) ( ((cond >> 1) << 1) + 1 - (cond % 2) )
-#define STACK_SHIFT 512
+#define STACK_SHIFT 256
 #if STACK_SHIFT < 64
   #error "Unsufficient stack shift has been configured"
 #endif

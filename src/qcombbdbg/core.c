@@ -195,6 +195,15 @@ void create_tasks_mapping(void)
 }
 
 /*
+ *  Frees task list memory.
+ */
+void remove_tasks_mapping(void)
+{
+  free(tlist.tasks);
+  tlist.num_tasks = 0;
+}
+
+/*
  *  Retrieves a task structure from its identifier.
  */
 rex_task * get_task_from_id(task_id tid)
@@ -618,6 +627,7 @@ int dbg_insert_tracepoint(void * addr, char kind, unsigned int pass, void ** rel
 
   tp->original_insn = insn;
   tp->trace.enabled = 0;
+  tp->trace.processing = 0;
   tp->trace.hits = 0;
   tp->trace.pass = pass;
   tp->trace.actions = 0;
@@ -635,6 +645,7 @@ int dbg_insert_tracepoint(void * addr, char kind, unsigned int pass, void ** rel
 int dbg_remove_tracepoint(void * addr)
 {
   breakpoint * tp;
+  trace_action * action, * next;
 
   tp = get_tracepoint_at_address(addr);
   if ( !tp )
@@ -642,6 +653,14 @@ int dbg_remove_tracepoint(void * addr)
 
   /* Restore the original instruction */
   dbg_disable_tracepoint(tp);
+
+  action = tp->trace.actions;
+  while ( action )
+  {
+    next = action->next;
+    free(action);
+    action = next;
+  }
 
   /* Destroy the tracepoint */
   dbg_unregister_breakpoint(tp);
@@ -801,7 +820,7 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
    * Ignore trace calls from the debugger itself ! 
    * TODO: irq-safe tracepoints ?
    */
-  if ( rex_self() != dbg_task && !cpu_is_in_irq_mode() )
+  if ( rex_self() != dbg_task && !cpu_is_in_irq_mode() && xchg_b(&tp->trace.processing, 1) == 0 )
   {
     /* Increase hits counter */
     tp->trace.hits++;
@@ -812,7 +831,6 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
         tengine.status = TRACE_STOP_NO_MORE_PASS;
     }
 
-    //rex_enter_critical_section(&tengine.critical_section);
     tframe = trace_buffer_create_frame(tp);
 
     /* Execute tracepoint actions */
@@ -820,7 +838,7 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
       if ( dbg_tracepoint_do_action(action, tframe, ctx) )
         break;
 
-    //rex_leave_critical_section(&tengine.critical_section);
+    tp->trace.processing = 0;
   }
   
 
@@ -1247,6 +1265,7 @@ response_packet * __cmd_attach(void)
  *    - Removes all defined breakpoints
  *    - Restores the interrupt vector table
  *    - Resumes all stopped tasks.
+ *    - Free allocated memory.
  */
 response_packet * __cmd_detach(void)
 {
@@ -1257,6 +1276,8 @@ response_packet * __cmd_detach(void)
     dbg_remove_all_breakpoints();
     restore_interrupt_handlers();
     dbg_resume_all_tasks();
+    remove_tasks_mapping();
+    trace_buffer_clear();
 
     initialized = 0;
   }

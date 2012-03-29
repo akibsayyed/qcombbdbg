@@ -27,7 +27,7 @@
 #include "interrupts.h"
 #include "trace.h"
 
-DEFINE_GDB_SCRIPT("scripts/tools/gdb-python/trace.py");
+//DEFINE_GDB_SCRIPT("scripts/tools/gdb-python/trace.py");
 
 trace_engine tengine;
 
@@ -284,6 +284,22 @@ int trace_buffer_remove_oldest_frame(void)
 }
 
 /*
+ *  Locks access to the tracebuffer.
+ */
+void trace_buffer_acquire_lock(void)
+{
+  rex_enter_critical_section(&tengine.tbuffer.crit_sect);
+}
+
+/*
+ *  Releases access to the tracebuffer.
+ */
+void trace_buffer_release_lock(void)
+{
+  rex_leave_critical_section(&tengine.tbuffer.crit_sect);
+}
+
+/*
  *  Creates a new frame in the trace buffer.
  *  A frame is created when a tracepoint is hit.
  *  Every tracepoint actions creates a new entry in the frame.
@@ -298,6 +314,8 @@ trace_frame * trace_buffer_create_frame(breakpoint * tp)
   tframe->entries = 0;
   tframe->next = 0;
 
+  trace_buffer_acquire_lock();
+
   if ( tengine.tbuffer.last_frame )
     tengine.tbuffer.last_frame->next = tframe;
   else
@@ -306,6 +324,8 @@ trace_frame * trace_buffer_create_frame(breakpoint * tp)
   tengine.tbuffer.last_frame = tframe;
   tengine.tbuffer.frame_created++;
   tengine.tbuffer.frame_count++;
+
+  trace_buffer_release_lock();
 
   return tframe;
 }
@@ -339,6 +359,8 @@ void trace_buffer_clear(void)
   tengine.tbuffer.frame_created = 0;
   tengine.tbuffer.frame_count = 0;
   tengine.tbuffer.used = 0;
+  
+  rex_initialize_critical_section(&tengine.tbuffer.crit_sect);
 }
 
 /*
@@ -395,7 +417,6 @@ void trace_vm_state_destroy(trace_vm_state * state)
 void trace_engine_init(void)
 {
   tengine.status = TRACE_STOP_NOT_RUN;
-  //rex_initialize_critical_section(&tengine.critical_section);
   trace_buffer_clear();
 }
 
@@ -503,7 +524,7 @@ DEFINE_OPCODE_HANDLER(rshu)
 DEFINE_OPCODE_HANDLER(trace_quick, int size)
 {
   void * addr;
-  addr = (void *)POP.i;
+  addr = (void *)PEEK(0).i;
   
   if ( trace_buffer_trace_memory(state->frame, addr, size) )
   {
@@ -515,6 +536,7 @@ DEFINE_OPCODE_HANDLER(trace_quick, int size)
 DEFINE_OPCODE_HANDLER(trace)
 {
   trace_op_trace_quick(state, POP.i);
+  (void)POP.i; /* remove address from stack */
 }
 
 DEFINE_OPCODE_HANDLER(eqz)

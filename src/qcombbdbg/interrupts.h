@@ -72,6 +72,7 @@ int cpu_is_in_irq_mode(void);
 int cpu_are_interrupts_enabled(void);
 void install_interrupt_handlers(void);
 void restore_interrupt_handlers(void);
+char xchg_b(char *, char);
 
 #endif
 

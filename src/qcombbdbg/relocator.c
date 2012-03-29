@@ -545,7 +545,10 @@ int thumb_rel_load_store_field(thumb_insn ** pdest, int reg, int load, int field
   if ( delta > 0 )
     op = T_SUB_SP_IMM7;
   else
+  {
     op = T_ADD_SP_IMM7;
+    delta = -delta;
+  }
 
   insn = thumb_insn_table[op].opcode.value;
   insn = thumb_insn_table[op].operands[1].set(insn, delta >> 2);
@@ -563,7 +566,10 @@ int thumb_rel_load_store_field(thumb_insn ** pdest, int reg, int load, int field
   if ( delta > 0 )
     op = T_ADD_SP_IMM7;
   else
+  {
     op = T_SUB_SP_IMM7;
+    delta = -delta;
+  }
 
   insn = thumb_insn_table[op].opcode.value;
   insn = thumb_insn_table[op].operands[1].set(insn, delta >> 2);
@@ -925,7 +931,7 @@ int relocate_thumb_insn(thumb_insn * pc, thumb_insn * dest, int * output_size)
           stack_delta += 4;
 
           tmp_insn = thumb_insn_set_imm8(T_LDR_SP_IMM8_OPCODE, num_regs);
-          tmp_insn = thumb_insn_set_rd(tmp_insn, REG_R0); 
+          tmp_insn = thumb_insn_set_rd_shifted(tmp_insn, REG_R0); 
           *dest++ = tmp_insn; /* ldr r0, [sp, num_regs * 4] */
           
           /* Save return value */
