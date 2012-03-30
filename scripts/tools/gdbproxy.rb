@@ -290,7 +290,8 @@ class GdbProxy
     'QStartNoAckMode',
     'qXfer:features:read',
     'qXfer:threads:read',
-    'EnableDisableTracepoints'
+    'EnableDisableTracepoints',
+    'ConditionalTracepoints'
   ]
 
   def initialize(port, tty)
@@ -507,6 +508,10 @@ class GdbProxy
 
   def dbg_insert_tracepoint(addr, kind, pass)
     dbg_send_cmd(Commands::INSERT_TP, [ addr, :u32 ], [ kind, :u8 ], [ pass, :u32 ])
+  end
+
+  def dbg_set_tracepoint_condition(addr, type, code)
+    dbg_send_cmd(Commands::SET_TP_CONDITION, [ addr, :u32 ], [ type, :u8 ], [ code, :blob ])
   end
 
   def dbg_add_tracepoint_action(addr, type, *args)
@@ -765,6 +770,10 @@ class GdbProxy
       when /^QTStart/
         @tracepoints.each_pair do |id, tp|
           dbg_insert_tracepoint(tp.addr, CpuState::THUMB, tp.pass)
+          if tp.condition
+            dbg_set_tracepoint_condition(tp.addr, Tracepoint::Actions::EXEC_GDB, tp.condition)
+          end
+
           tp.actions.each do |action|
             dbg_add_tracepoint_action(tp.addr, action[0], *action[1..-1])
           end
@@ -789,12 +798,12 @@ class GdbProxy
       when /^qTfV/, /^qTfP/, /^qTsV/, /^qTsP/
         send_packet 'l' # TODO
 
-      when /QTDP:([^-]+):(.+):(E|D):(.+):(.+)(:X(.+),(.+))?-?$/
+      when /QTDP:([^-]+):(.+):(E|D):([^:]+):([^:-]+)(:F([^-]+))?(:X(.+),([^-]+))?-?$/
         n = $1.hex
         addr = $2.hex
         step = $4.hex
         pass = $5.hex
-        condition = $8.hex if $6
+        condition = [ $10 ].pack('H*') if $8
 
         fail "Stepping tracepoints are not supported" if step != 0
 

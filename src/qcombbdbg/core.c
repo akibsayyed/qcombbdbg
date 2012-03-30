@@ -631,6 +631,8 @@ int dbg_insert_tracepoint(void * addr, char kind, unsigned int pass, void ** rel
   tp->trace.hits = 0;
   tp->trace.pass = pass;
   tp->trace.actions = 0;
+  tp->trace.condition.code = 0;
+  tp->trace.condition.size = 0;
   tp->next = 0;
 
   /* Insert the tracepoint in the breakpoint list */
@@ -654,6 +656,7 @@ int dbg_remove_tracepoint(void * addr)
   /* Restore the original instruction */
   dbg_disable_tracepoint(tp);
 
+  /* Free tracepoint actions */
   action = tp->trace.actions;
   while ( action )
   {
@@ -661,6 +664,10 @@ int dbg_remove_tracepoint(void * addr)
     free(action);
     action = next;
   }
+
+  /* Free tracepoint condition */
+  if ( tp->trace.condition.code )
+    free(tp->trace.condition.code);
 
   /* Destroy the tracepoint */
   dbg_unregister_breakpoint(tp);
@@ -695,6 +702,7 @@ void dbg_remove_all_breakpoints(void)
 {
   breakpoint * bp;
   breakpoint * current;
+  trace_action * action, * next;
 
   bp = bps;
   while ( bp )
@@ -703,8 +711,25 @@ void dbg_remove_all_breakpoints(void)
 
     /* Restore the original instruction */
     dbg_write_insn(current->address, current->kind, current->original_insn);
+
+    /* Free the relocation buffer */
     if ( bp->relocated_address )
       free(bp->relocated_address);
+
+    /* Free tracepoint structures */
+    if ( bp->type == BREAKPOINT_TRACE )
+    {
+      action = bp->trace.actions;
+      while ( action )
+      {
+        next = action->next;
+        free(action);
+        action = next;
+      }
+
+      if ( bp->trace.condition.code )
+        free(bp->trace.condition.code);
+    }
 
     bp = bp->next;
     free(current);
@@ -773,7 +798,7 @@ int dbg_tracepoint_do_action(trace_action * action, trace_frame * tframe, saved_
       state = trace_vm_state_create(ctx, tframe);
       if ( !state )
       {
-        trace_stop(ret = TRACE_STOP_DISCONNECTED);
+        trace_stop(ret = TRACE_STOP_UNKNOWN);
         break;
       }
 
@@ -782,6 +807,42 @@ int dbg_tracepoint_do_action(trace_action * action, trace_frame * tframe, saved_
 
     default:
       trace_stop(ret = TRACE_STOP_UNKNOWN);
+      break;
+  }
+
+  if ( state )
+    trace_vm_state_destroy(state);
+
+  return ret;
+}
+
+/*
+ *  Evaluate a tracepoint condition.
+ *  Returns 0 if the condition is met.
+ */
+int dbg_tracepoint_check_condition(breakpoint * tp, saved_context * ctx)
+{
+  int ret;
+  trace_vm_state * state;
+
+  ret = 0;
+  state = 0;
+  switch ( tp->trace.condition.type )
+  {
+    case TRACEPOINT_ACTION_EXEC_GDB:
+      state = trace_vm_state_create(ctx, 0);
+      if ( !state )
+      {
+        trace_stop(TRACE_STOP_UNKNOWN);
+        break;
+      }
+
+      if ( trace_vm_eval(state, tp->trace.condition.code, tp->trace.condition.size, &ret) )
+        trace_stop(TRACE_STOP_UNKNOWN);
+      break;
+
+    default:
+      trace_stop(TRACE_STOP_UNKNOWN);
       break;
   }
 
@@ -822,21 +883,25 @@ void __attribute__((noinline)) dbg_trace_handler(breakpoint * tp, saved_context 
    */
   if ( rex_self() != dbg_task && !cpu_is_in_irq_mode() && xchg_b(&tp->trace.processing, 1) == 0 )
   {
-    /* Increase hits counter */
-    tp->trace.hits++;
-    if ( tp->trace.pass != 0 && tp->trace.hits >= tp->trace.pass )
+    /* Check tracepoint condition */
+    if ( !tp->trace.condition.code || dbg_tracepoint_check_condition(tp, ctx) )
     {
-      dbg_disable_tracepoint(tp);
-      if ( tengine.status == 0 && !dbg_any_tracepoint_alive() )
-        tengine.status = TRACE_STOP_NO_MORE_PASS;
+      /* Increase hits counter */
+      tp->trace.hits++;
+      if ( tp->trace.pass != 0 && tp->trace.hits >= tp->trace.pass )
+      {
+        dbg_disable_tracepoint(tp);
+        if ( tengine.status == 0 && !dbg_any_tracepoint_alive() )
+          tengine.status = TRACE_STOP_NO_MORE_PASS;
+      }
+
+      tframe = trace_buffer_create_frame(tp);
+
+      /* Execute tracepoint actions */
+      foreach_tracepoint_action(tp, action)
+        if ( dbg_tracepoint_do_action(action, tframe, ctx) )
+          break;
     }
-
-    tframe = trace_buffer_create_frame(tp);
-
-    /* Execute tracepoint actions */
-    foreach_tracepoint_action(tp, action)
-      if ( dbg_tracepoint_do_action(action, tframe, ctx) )
-        break;
 
     tp->trace.processing = 0;
   }
@@ -1603,6 +1668,47 @@ response_packet * __cmd_get_tracepoint_status(void * address)
     ret = ERROR_NO_TRACEPOINT;
 
   response->error_code = ret;
+  return response;
+}
+
+response_packet * __cmd_set_tracepoint_condition(void * address, char type, char * code, unsigned int size)
+{
+  response_packet * response;
+  breakpoint * tp;
+
+  response = alloc_response_packet(0);
+
+  tp = get_tracepoint_at_address(address);
+  if ( !tp )
+  {
+    response->error_code = ERROR_NO_TRACEPOINT;
+    return response;
+  }
+
+  if ( tp->trace.condition.code )
+    free(tp->trace.condition.code);
+
+  tp->trace.condition.code = malloc(size);
+  if ( !tp->trace.condition.code )
+  {
+    response->error_code = ERROR_NO_MEMORY_AVAILABLE;
+    return response;
+  }
+
+  switch ( type )
+  {
+    case TRACEPOINT_ACTION_EXEC_GDB:
+    case TRACEPOINT_ACTION_EXEC_NATIVE:
+      tp->trace.condition.type = type;
+      tp->trace.condition.size = size;
+      __memcpy(tp->trace.condition.code, code, size);
+      break;
+
+    default:
+      response->error_code = ERROR_INVALID_TRACE_ACTION;
+      free(tp->trace.condition.code);
+  }
+
   return response;
 }
 

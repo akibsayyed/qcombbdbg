@@ -59,7 +59,8 @@ void trace_start(void)
 void trace_stop(char stop_reason)
 {
   dbg_disable_all_tracepoints();
-  tengine.status = stop_reason;
+  if ( !tengine.status )
+    tengine.status = stop_reason;
 }
 
 /*
@@ -526,11 +527,8 @@ DEFINE_OPCODE_HANDLER(trace_quick, int size)
   void * addr;
   addr = (void *)PEEK(0).i;
   
-  if ( trace_buffer_trace_memory(state->frame, addr, size) )
-  {
-    state->running = 0;
-    state->error = TRACE_VM_ERROR_UNKNOWN;
-  }
+  if ( !state->frame || trace_buffer_trace_memory(state->frame, addr, size) )
+    trace_vm_error(state, TRACE_VM_ERROR_CANNOT_TRACE_MEMORY);
 }
 
 DEFINE_OPCODE_HANDLER(trace)
@@ -727,11 +725,8 @@ DEFINE_OPCODE_HANDLER(setv, int n)
 
 DEFINE_OPCODE_HANDLER(tracev, int n)
 {
-  if ( trace_buffer_trace_variable(state->frame, n) )
-  {
-    state->running = 0;
-    state->error = TRACE_VM_ERROR_UNKNOWN;
-  }
+  if ( !state->frame || trace_buffer_trace_variable(state->frame, n) )
+    trace_vm_error(state, TRACE_VM_ERROR_CANNOT_TRACE_VARIABLE);
 }
 
 DEFINE_OPCODE_HANDLER(tracenz)
@@ -891,7 +886,7 @@ int trace_vm_exec(trace_vm_state * state, char * bytecode, unsigned int size)
  */
 int trace_vm_eval(trace_vm_state * state, char * bytecode, unsigned int size, int * result)
 {
-  if ( trace_vm_exec(state, bytecode, size) );
+  if ( trace_vm_exec(state, bytecode, size) )
     return state->error;
 
   *result = PEEK(0).i;

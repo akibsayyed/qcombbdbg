@@ -141,6 +141,15 @@ response_packet * __cmd_dispatcher(request_packet * packet, int size)
       response = __cmd_get_tracepoint_status(packet->breakpoint.address);
       break;
 
+    case CMD_SET_TRACEPOINT_CONDITION:
+      response = __cmd_set_tracepoint_condition(
+        packet->taction.address, 
+        packet->taction.type, 
+        packet->taction.code,
+        size - __builtin_offsetof(request_packet, taction.code)
+      );
+      break;
+
     case CMD_ADD_TRACEPOINT_ACTION:
       response = __cmd_add_tracepoint_action(
         packet->taction.address, 

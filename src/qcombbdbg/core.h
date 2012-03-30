@@ -230,8 +230,9 @@ typedef struct __packed _breakpoint
       trace_action * actions;
 
       struct __packed {
+        char type;
+        void * code;
         unsigned int size;
-        char * bytecode;
       } condition;
     } trace;
 
@@ -430,6 +431,7 @@ response_packet * __cmd_remove_tracepoint(void *);
 response_packet * __cmd_enable_tracepoint(void *);
 response_packet * __cmd_disable_tracepoint(void *);
 response_packet * __cmd_get_tracepoint_status(void *);
+response_packet * __cmd_set_tracepoint_condition(void *, char, char *, unsigned int);
 response_packet * __cmd_add_tracepoint_action(void *, char, char *, unsigned int);
 response_packet * __cmd_get_tracebuffer_frame(unsigned int);
 
