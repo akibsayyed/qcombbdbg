@@ -350,11 +350,11 @@ class DiagTaskClient
       :release_date => packet[20,11],
       :release_time => packet[31,8],
       :version_directory => packet[39,8],
-      :station_class_mark => packet[47],
-      :mobile_cai_revision => packet[48],
-      :mobile_model => packet[49],
+      :station_class_mark => packet[47,1].unpack('C')[0],
+      :mobile_cai_revision => packet[48,1].unpack('C')[0],
+      :mobile_model => packet[49,1].unpack('C')[0],
       :mobile_fw_revision => packet[50,2],
-      :slot_cycle_index => packet[52],
+      :slot_cycle_index => packet[52,1].unpack('C')[0],
       :msm_version => packet[53,2]
     }
   end
@@ -363,7 +363,7 @@ class DiagTaskClient
     packet = exec_diag_cmd Command::GetExtendedBuildId.new
   
     {
-      :hw_version => packet[4,4],
+      :hw_version => packet[4,4].unpack('V')[0].to_s(16),
       :mob_model => packet[8,4],
       :mob_sw_rev => packet[12..-1].unpack('Z*')[0]
     }
@@ -387,10 +387,21 @@ class DiagTaskClient
     packet.hexdump
   end
 
-  def peek_message
-    packet = exec_diag_cmd Command::PeekMessage.new(MessageLevel::LOW)
+  def peek_messages(level = MessageLevel::LOW)
+    packet = exec_diag_cmd Command::PeekMessage.new(level)
 
-    packet.hexdump
+    { :quantity => packet[1,2].unpack('v')[0],
+      :drop_count => packet[3, 4].unpack('V')[0],
+      :total_msgs => packet[7, 4].unpack('V')[0],
+      :msg_level => packet[11, 1].unpack('C')[0],
+      :filename => packet[12, 13].unpack('Z*')[0],
+      :line_num => packet[25, 2].unpack('v')[0],
+      :fmt_string => packet[27, 40].unpack('Z*')[0],
+      :code1 => packet[67, 4].unpack('V')[0],
+      :code2 => packet[71, 4].unpack('V')[0],
+      :code3 => packet[75, 4].unpack('V')[0],
+      :timestamp => packet[79, 8]
+    }
   end
 
   def readv(address, size)

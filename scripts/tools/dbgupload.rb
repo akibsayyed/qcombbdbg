@@ -83,7 +83,9 @@ end
 #
 # Compile the preloader and the debugger
 #
+system "make -C #{PRELOADER_PATH} clean"
 system "make -C #{PRELOADER_PATH} MODEL=#{version}"
+system "make -C #{DEBUGGER_PATH} clean"
 system "make -C #{DEBUGGER_PATH} MODEL=#{version}"
 
 offsets = DEVICE_OFFSETS[version]
