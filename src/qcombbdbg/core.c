@@ -87,6 +87,11 @@ static inline void * memmove_inline(void * dst, void * src, unsigned int size)
   return dst;
 }
 
+void fatal_error(int id, const char * file, const char * msg)
+{
+  rex_fatal_error(id, file, msg);
+}
+
 /*
  *  Initialize the debugger heap.
  */
@@ -177,7 +182,7 @@ void create_tasks_mapping(void)
 
     tlist.num_tasks = num_tasks;
     tlist.tasks = malloc(num_tasks * sizeof(task_entry));
-
+    
     /* 
      * Tasks list is ordered by priority and is subject to be modified
      *  during a scheduling event. We disable interrupts for the time of associating
@@ -190,7 +195,6 @@ void create_tasks_mapping(void)
       TASK_INFO(id).task = task;
       TASK_INFO(id).state = TASK_STATE_ALIVE;
     }
-  
   );
 }
 

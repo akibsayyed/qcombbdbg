@@ -112,8 +112,9 @@ void cpu_restore_interrupts(int flags)
     "and %1, %1, %[mask_int]\n"
     "orr %0, %0, %1\n"
     "msr cpsr_c, %0\n",
-    : "=r" (tmp_reg)
+    : "=&r" (tmp_reg)
     : "r" (flags), [mask_int] "i" (ARM_SPR_MASK_INTS)
+    : "memory"
   );
 }
 

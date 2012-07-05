@@ -43,6 +43,8 @@ SECTIONS
   PROVIDE(heap_malloc = 0x5f833c | 1);
   PROVIDE(heap_free = 0x5f859a | 1);
 
+  PROVIDE(rex_fatal_error = 0x7c890a | 1);
+
   /* Diagnostic task functions, necessary */
   PROVIDE(diag_alloc_packet = 0x5728d6 | 1);
   PROVIDE(diag_queue_response_packet = 0x572aec | 1);

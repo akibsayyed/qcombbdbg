@@ -126,9 +126,6 @@ extern void __memmove(void *, void *, int);
 extern void __memset(void *, char, int);
 extern char * __strcpy(char *, const char *);
 
-extern unsigned long long int __aeabi_idivmod(int, int);
-extern unsigned long long int __aeabi_uidivmod(unsigned int, unsigned int);
-
 extern rex_task * rex_self(void);
 extern void rex_find_best_task(rex_task *);
 extern void rex_context_switch(void);
@@ -144,6 +141,8 @@ extern void rex_leave_critical_section(rex_critical_section *);
 extern void heap_create(rex_heap *, void *, int, void (*)(rex_heap *));
 extern void * heap_malloc(rex_heap *, int);
 extern void heap_free(rex_heap *, void *);
+
+extern void rex_fatal_error(int, const char *, const char *);
 
 extern char * diag_alloc_packet(char, int);
 extern void diag_queue_response_packet(void *);

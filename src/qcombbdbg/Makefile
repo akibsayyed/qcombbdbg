@@ -3,7 +3,7 @@ AS=arm-unknown-linux-gnueabi-as
 CC=arm-unknown-linux-gnueabi-gcc
 LD=arm-unknown-linux-gnueabi-ld
 OBJCOPY=arm-unknown-linux-gnueabi-objcopy
-SOURCES=qcombbdbg.c rex.c interrupts.c mmu.c core.c trace.c relocator.c
+SOURCES=qcombbdbg.c abi.c interrupts.c mmu.c core.c trace.c relocator.c
 OBJECTS=$(SOURCES:.c=.o)
 
 MODEL=2.5.23Hd
