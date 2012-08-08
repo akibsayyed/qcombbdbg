@@ -536,7 +536,7 @@ class DiagTaskClient
   private
 
   def log(msg)
-    @logger.puts("LOG: #{msg}")
+    @logger.puts("LOG: #{msg}") if @logger
   end
 
   def flush_input

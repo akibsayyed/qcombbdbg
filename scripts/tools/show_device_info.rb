@@ -4,11 +4,10 @@ $: << '..'
 
 require 'pp'
 require 'diagtaskclient'
-require 'stringio'
 
 DEFAULT_TTY = '/dev/ttyHS2'
 TTY = ARGV[0] || DEFAULT_TTY
-diag = DiagTaskClient.new(TTY, StringIO.new)
+diag = DiagTaskClient.new(TTY, nil)
 
 if version = diag.get_version and build = diag.get_extended_build_id 
   puts "Mobile software revision:".ljust(40, ' ') + build[:mob_sw_rev]

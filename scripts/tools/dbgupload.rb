@@ -36,11 +36,13 @@ DEBUGGER_PATH = "../../src/qcombbdbg"
 TTY = ARGV[0] || '/dev/ttyHS2'
 abort "Cannot find TTY device #{TTY}, exiting." unless File.exists? TTY
 
+require 'stringio'
 @diag = DiagTaskClient.new(TTY)
 
 PAYLOAD_ADDR = 0x01d0_0000 # Where the debugger is uploaded
 PRELOAD_ADDR = 0x01e0_0000 # Where the preloader is uploaded
 NEW_CMD_TABLE_ADDR = 0x1c0_0000 # Where the diagnostic command table is relocated
+LOOPBACK_CMD = 0x7b
 
 
 #
@@ -51,22 +53,16 @@ DEVICE_OFFSETS =
   "2.5.13Hd" =>
   {
     :cmd_root_table_addr => 0xef09c4,
-    :cmd_hook_table_addr => 0x425788,
-    :cmd_hook_table_size => 280
   },
 
   "2.5.21Hd" =>
   {
     :cmd_root_table_addr => 0xef09c4,
-    :cmd_hook_table_addr => 0x425800,
-    :cmd_hook_table_size => 280
   },
 
   "2.5.23Hd" =>
   {
     :cmd_root_table_addr => 0xef49c4,
-    :cmd_hook_table_addr => 0x42580c,
-    :cmd_hook_table_size => 280
   }
 }
 
@@ -99,20 +95,39 @@ else
   @diag.writev(PRELOAD_ADDR, File.read("#{PRELOADER_PATH}/preloader.bin", :encoding => 'binary'))
 end
 
-#
-# Copy cmd table
-#
-cmd_table = @diag.readv(offsets[:cmd_hook_table_addr], offsets[:cmd_hook_table_size])
-@diag.writev(NEW_CMD_TABLE_ADDR, cmd_table)
+def patch_command(root_table, cmd, routine)
+  while (cmd_set_addr = @diag.readv(root_table, 4).unpack('V')[0]) != 0
+    cmd_set = @diag.readv(cmd_set_addr, 16)
+    if cmd_set[2, 4] == "\xff\x00\xff\x00" # Standard command
+      num_cmds = cmd_set[6,2].unpack('v')[0]
+      cmd_array_addr = cmd_set[12,4].unpack('V')[0]
+      cmd_array = @diag.readv(cmd_array_addr, num_cmds * 8)
 
-#patch cmd
-@diag.writev(NEW_CMD_TABLE_ADDR + 0xc, [ NEW_CMD_TABLE_ADDR + 0x10 ].pack("V"))
-@diag.writev(NEW_CMD_TABLE_ADDR + 0xbc, [ PRELOAD_ADDR + 1 ].pack("V"))
+      num_cmds.times do |i|
+        cmd_def = cmd_array[i * 8, 8]
+        if cmd_def[0, 2].unpack('v')[0] == cmd # We found it!
+          cmd_set[12, 4] = [ NEW_CMD_TABLE_ADDR + 16 ].pack('V') # move structures next to each other
+          cmd_array[i * 8 + 4, 4] = [ routine | 1 ].pack('V') # redirect command handler to our routine
+          
+          # Write the new command handler set
+          @diag.writev(NEW_CMD_TABLE_ADDR, cmd_set + cmd_array)  
 
-#
-# Redirect cmd table
-#
-@diag.writev(offsets[:cmd_root_table_addr] + 0x11 * 4, [ NEW_CMD_TABLE_ADDR ].pack("V"))
+          # Redirect the command table
+          @diag.writev(root_table, [ NEW_CMD_TABLE_ADDR ].pack('V'))
+
+          return NEW_CMD_TABLE_ADDR + 16 + i * 8 + 4 # address of routine
+        end
+      end
+    end
+
+    root_table += 4
+  end
+
+  nil
+end
+
+handler_addr = patch_command(offsets[:cmd_root_table_addr], LOOPBACK_CMD, PRELOAD_ADDR)
+fail "Cannot install DIAG command hook" unless handler_addr
 
 #
 # We can now use the preloader function to inject the real payload faster.
@@ -142,5 +157,5 @@ end
 #
 # Patch cmd to point at final payload
 #
-@diag.writev(NEW_CMD_TABLE_ADDR + 0xbc, [ PAYLOAD_ADDR + 1 ].pack("V"))
+@diag.writev(handler_addr, [ PAYLOAD_ADDR | 1 ].pack("V"))
 
