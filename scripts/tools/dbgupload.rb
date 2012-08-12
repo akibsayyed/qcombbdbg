@@ -36,7 +36,6 @@ DEBUGGER_PATH = "../../src/qcombbdbg"
 TTY = ARGV[0] || '/dev/ttyHS2'
 abort "Cannot find TTY device #{TTY}, exiting." unless File.exists? TTY
 
-require 'stringio'
 @diag = DiagTaskClient.new(TTY)
 
 PAYLOAD_ADDR = 0x01d0_0000 # Where the debugger is uploaded
@@ -69,8 +68,9 @@ DEVICE_OFFSETS =
 #
 # Get firmware version
 #
+STDERR.print "[*] Querying firmware revision... "
 version = @diag.get_extended_build_id[:mob_sw_rev]
-STDERR.puts "[*] Got firmware revision : #{version}"
+STDERR.puts "Found #{version}"
 
 unless DEVICE_OFFSETS.include?(version)
   abort "Unknown device revision (#{version}), aborting."
@@ -79,10 +79,8 @@ end
 #
 # Compile the preloader and the debugger
 #
-system "make -C #{PRELOADER_PATH} clean"
-system "make -C #{PRELOADER_PATH} MODEL=#{version}"
-system "make -C #{DEBUGGER_PATH} clean"
-system "make -C #{DEBUGGER_PATH} MODEL=#{version}"
+system "make -C #{PRELOADER_PATH} MODEL=#{version} rebuild"
+system "make -C #{DEBUGGER_PATH} MODEL=#{version} rebuild"
 
 offsets = DEVICE_OFFSETS[version]
 

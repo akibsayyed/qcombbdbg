@@ -30,7 +30,7 @@
  * as the entry point.
  */
 
-response_packet * __cmd_dispatcher(request_packet * packet, int size)
+response_packet * __cmd_dispatcher(request_packet * packet, size_t size)
 {
   response_packet * response;
 
@@ -45,8 +45,9 @@ response_packet * __cmd_dispatcher(request_packet * packet, int size)
       response = __cmd_detach();
       break;
 
-    case CMD_GET_NUM_TASKS:
-      response = __cmd_get_num_tasks();
+    //case CMD_GET_NUM_TASKS:
+    case CMD_GET_SYSTEM_INFO:
+      response = __cmd_get_system_info();
       break;
 
     case CMD_GET_TASK_INFO:

@@ -30,3 +30,6 @@ define connect
   info threads
 end
 
+define show system-info
+  main packet qQcombbdbg:SystemInfo
+end

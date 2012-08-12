@@ -44,6 +44,22 @@ interrupt_vector_table original_ivt;
     __VA_ARGS__ \
   ) \
 
+
+/*
+ *  Returns the current program register.
+ */
+int get_cpsr(void)
+{
+  int cpsr;
+
+  ARM_ASSEMBLY(
+    "mrs %0, cpsr\n",
+    : "=r" (cpsr)
+  );
+
+  return cpsr;
+}
+
 /*
  *  Disables IRQ and FIQ interrupts.
  *  Returns previous interrupt flags.

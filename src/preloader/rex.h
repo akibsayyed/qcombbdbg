@@ -21,8 +21,9 @@
 #ifndef __REX_H
 #define __REX_H
 
-extern void __memcpy(void *, void *, int);
-extern char * diag_alloc_packet(char, int);
+#include <stddef.h>
+
+extern void * diag_alloc_packet(char, size_t);
 
 #endif
 

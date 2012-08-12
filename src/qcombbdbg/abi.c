@@ -26,6 +26,8 @@
  * eabi soft arithmetic divisions
  * needed by gcc
  */
+
+#ifdef REUSE_EXTERNAL_SOFTFLOAT_FUNCS
 int __divsi3(int a, int b)
 {
   unsigned long long int result;
@@ -67,6 +69,7 @@ int __umodsi3(unsigned int a, unsigned int b)
   result = __aeabi_uidivmod(a, b);
   return result >> 32;
 }
+#endif
 
 /* GCC switch helpers */
 void __attribute__((naked)) __gnu_thumb1_case_sqi(int i)

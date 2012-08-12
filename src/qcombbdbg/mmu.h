@@ -21,6 +21,8 @@
 #ifndef __MMU_H
 #define __MMU_H
 
+#include <stddef.h>
+
 typedef union 
 {
   unsigned int i;
@@ -116,14 +118,15 @@ typedef mmu_section_descriptor *mmu_page_table;
 #define MMU_CONTROL_EXTENDED_PAGE_TABLE (1 << 23)
 #define MMU_CONTROL_EXCEPTION_ENDIAN (1 << 25)
 
+cpu_id_register cpuid(void);
 void mmu_enable(void);
 void mmu_disable(void);
-int mmu_probe_read(void *, unsigned int);
-int mmu_probe_write(void *, unsigned int);
+int mmu_probe_read(void *, size_t);
+int mmu_probe_write(void *, size_t);
 int mmu_probe_execute(void *);
 int mmu_set_access_protection(void *, int);
 void mmu_sync_insn_cache_at(void * addr);
-void mmu_sync_insn_cache_range(void * addr, unsigned int);
+void mmu_sync_insn_cache_range(void * addr, size_t);
 
 #endif
 

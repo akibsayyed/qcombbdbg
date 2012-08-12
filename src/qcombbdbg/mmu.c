@@ -164,7 +164,7 @@ void mmu_invalidate_insn_cache_line(void * addr)
 /*
  *  Invalidates a memory range in the instruction cache.
  */
-void mmu_invalidate_insn_cache_range(void * addr, unsigned int size)
+void mmu_invalidate_insn_cache_range(void * addr, size_t size)
 {
   unsigned int cache_line_size;
   void * line;
@@ -188,7 +188,7 @@ void mmu_clean_data_cache_line(void * addr)
 /*
  *  Cleans a memory range in the data cache.
  */
-void mmu_clean_data_cache_range(void * addr, unsigned int size)
+void mmu_clean_data_cache_range(void * addr, size_t size)
 {
   unsigned int cache_line_size;
   void * line;
@@ -242,7 +242,7 @@ void mmu_sync_insn_cache_at(void * addr)
 /*
  *  Same as mmu_sync_insn_cache_at() but on a memory range.
  */
-void mmu_sync_insn_cache_range(void * addr, unsigned int size)
+void mmu_sync_insn_cache_range(void * addr, size_t size)
 {
   cache_type_register cache_type;
 
@@ -322,7 +322,7 @@ void mmu_disable(void)
  *  ARMv5 only, assumes APX is not implemented.
  *  Assumes section granularity is used.
  */
-int mmu_probe_read(void * addr, unsigned int length)
+int mmu_probe_read(void * addr, size_t length)
 {
   mmu_page_table ttbr;
   mmu_section_descriptor * section_desc_entry;
@@ -373,7 +373,7 @@ int mmu_probe_read(void * addr, unsigned int length)
  *  ARMv5 only, assumes APX is not implemented.
  *  Assumes section granularity is used.
  */
-int mmu_probe_write(void * addr, unsigned int length)
+int mmu_probe_write(void * addr, size_t length)
 {
   mmu_page_table ttbr;
   mmu_section_descriptor * section_desc_entry;

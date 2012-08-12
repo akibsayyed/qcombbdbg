@@ -21,6 +21,8 @@
 #ifndef __REX_H
 #define __REX_H
 
+#include <stddef.h>
+
 #define ARM_CODE 0
 #define THUMB_CODE 1
 
@@ -34,9 +36,9 @@ typedef struct __attribute__((packed, aligned(4))) _rex_task
   int active_signals;
   int wait_signals;
   int priority;
-  int total_exec_time;
+  unsigned int total_exec_time;
   int unknown_1c;
-  int num_apc;
+  unsigned int num_apc;
   struct _rex_task * next_task;
   struct _rex_task * prev_task;
   struct _rex_task * next_task_in_crit_sect;
@@ -57,7 +59,7 @@ typedef struct __attribute__((packed, aligned(4))) _rex_task
   struct _rex_task * unknown_task_ptr;
   char name[TASK_NAME_SIZE];
   struct _rex_task * self;
-  int stack_size;
+  size_t stack_size;
   int unknown_74;
   int heartbeat_id;
   int auto_heartbeat;
@@ -92,11 +94,11 @@ typedef struct __attribute__((packed)) _rex_heap
 {
   rex_heap_chunk * first_chunk;
   rex_heap_chunk * next_chunk;
-  int total_chunks;
-  int total_bytes;
-  int used_bytes;
-  int max_used_bytes;
-  int max_chunk_size;
+  unsigned int total_chunks;
+  size_t total_bytes;
+  size_t used_bytes;
+  size_t max_used_bytes;
+  size_t max_chunk_size;
   void (* malloc_failover_routine)();
   void (* lock_routine)();
   void (* unlock_routine)();
@@ -111,7 +113,7 @@ typedef struct __attribute__((packed)) _rex_queue
 {
   rex_queue_item * next;
   rex_queue_item * last;
-  int count;
+  unsigned int count;
 } rex_queue;
 
 typedef void * (* rex_apc_routine)(void *);
@@ -121,9 +123,6 @@ typedef void * (* rex_apc_routine)(void *);
 #define TASK_ENABLE(task) task->disabled = 0;
 #define TASK_DISABLE(task) task->disabled = 1;
 
-extern void __memcpy(void *, void *, int);
-extern void __memmove(void *, void *, int);
-extern void __memset(void *, char, int);
 extern char * __strcpy(char *, const char *);
 
 extern rex_task * rex_self(void);
@@ -138,13 +137,13 @@ extern void rex_initialize_critical_section(rex_critical_section *);
 extern void rex_enter_critical_section(rex_critical_section *);
 extern void rex_leave_critical_section(rex_critical_section *);
 
-extern void heap_create(rex_heap *, void *, int, void (*)(rex_heap *));
-extern void * heap_malloc(rex_heap *, int);
+extern void heap_create(rex_heap *, void *, size_t, void (*)(rex_heap *));
+extern void * heap_malloc(rex_heap *, size_t);
 extern void heap_free(rex_heap *, void *);
 
 extern void rex_fatal_error(int, const char *, const char *);
 
-extern char * diag_alloc_packet(char, int);
+extern char * diag_alloc_packet(char, size_t);
 extern void diag_queue_response_packet(void *);
 
 extern rex_task * tasks_head;

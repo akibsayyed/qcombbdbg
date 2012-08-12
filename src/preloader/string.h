@@ -23,8 +23,13 @@
 
 #include <stddef.h>
 
-extern unsigned long long int __aeabi_idivmod(int, int);
-extern unsigned long long int __aeabi_uidivmod(unsigned int, unsigned int);
+void * memmove(void *, const void *, size_t);
+void * memcpy(void *, const void *, size_t);
+void * memset(void *, int, size_t);
+
+extern void * __memmove(void *, const void *, size_t);
+extern void * __memcpy(void *, const void *, size_t);
+extern void * __memset(void *, int, size_t);
 
 #endif
 

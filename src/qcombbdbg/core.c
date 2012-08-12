@@ -22,6 +22,7 @@
  *  core.c: The debugger core functions.
  */
 
+#include "string.h"
 #include "rex.h"
 #include "interrupts.h"
 #include "mmu.h"
@@ -46,6 +47,7 @@ extern trace_engine tengine;
 char __scratch_buffer[128];
 
 #define TASK_INFO(tid) tlist.tasks[tid - 1]
+
 
 /*
  *  Returns the current stack pointer.
@@ -95,7 +97,7 @@ void fatal_error(int id, const char * file, const char * msg)
 /*
  *  Initialize the debugger heap.
  */
-void create_dbg_heap(void * base, int size)
+void create_dbg_heap(void * base, size_t size)
 {
   heap_create(&dbg_heap, base, size, 0);
 }
@@ -103,7 +105,7 @@ void create_dbg_heap(void * base, int size)
 /*
  *  Memory allocation in the debugger heap.
  */
-void * malloc(int size)
+void * malloc(size_t size)
 {
   return heap_malloc(&dbg_heap, size);
 }
@@ -120,7 +122,7 @@ void free(void * chunk)
  *  Allocates a DIAG packet of the specified size.
  *  Automatically freed when processed by the task.
  */
-void * alloc_packet(int size)
+void * alloc_packet(size_t size)
 {
   return diag_alloc_packet(DBG_CMD, size);
 }
@@ -129,7 +131,7 @@ void * alloc_packet(int size)
  * Allocates a new response packet from the diag task heap.
  * Argument is size of the packet, not counting first two mandatory header bytes (type and error_code).
  */
-response_packet * alloc_response_packet(int data_size)
+response_packet * alloc_response_packet(size_t data_size)
 {
   response_packet * response;
 
@@ -313,7 +315,7 @@ void send_event_packet(event_packet * pkt)
   packet = alloc_event_packet();
   if ( pkt )
   {
-    __memcpy(&packet->tid, &pkt->tid, sizeof(event_packet) - 1);
+    memcpy(&packet->tid, &pkt->tid, sizeof(event_packet) - 1);
     diag_queue_response_packet(packet);
   }
 
@@ -337,7 +339,7 @@ int dbg_get_task_registers(task_id tid, context * ctx)
   saved_ctx = TASK_INFO(tid).ctx;
   saved_sp = TASK_INFO(tid).saved_sp;
 
-  __memcpy(&ctx->saved_ctx, saved_ctx, sizeof(saved_context));
+  memcpy(&ctx->saved_ctx, saved_ctx, sizeof(saved_context));
   ctx->sp = saved_sp;
 
   return 0;
@@ -357,7 +359,7 @@ int dbg_set_task_registers(task_id tid, context * ctx)
   if ( get_task_state(tid) != TASK_STATE_HALTED )
     return ERROR_INVALID_TASK_STATE;
 
-  __memcpy(TASK_INFO(tid).ctx, &ctx->saved_ctx, sizeof(saved_context));
+  memcpy(TASK_INFO(tid).ctx, &ctx->saved_ctx, sizeof(saved_context));
   TASK_INFO(tid).saved_sp = ctx->sp;
 
   return 0;
@@ -746,14 +748,14 @@ void dbg_remove_all_breakpoints(void)
  *  Reads a piece of memory.
  *  Returned data hides defined memory breakpoints.
  */
-int dbg_read_memory(void * start, void * out,  unsigned int size)
+int dbg_read_memory(void * start, void * out, size_t size)
 {
   breakpoint * bp;
   int bp_size;
   void * bp_end, * data_end;
 
   if ( mmu_probe_read(start, size) )
-    __memcpy(out, start, size);
+    memcpy(out, start, size);
   else
     return ERROR_INVALID_MEMORY_ACCESS;
   
@@ -769,14 +771,14 @@ int dbg_read_memory(void * start, void * out,  unsigned int size)
     {
       /* Full breakpoint in range */
       if ( bp->address >= start ) 
-        __memcpy(bp->address - start + out, &bp->original_insn, bp_size);
+        memcpy(bp->address - start + out, &bp->original_insn, bp_size);
       else /* Missing first breakpoint bytes */
-        __memcpy(out, (void *)&bp->original_insn + (start - bp->address), bp_size - (start - bp->address));
+        memcpy(out, (void *)&bp->original_insn + (start - bp->address), bp_size - (start - bp->address));
     }
     
     /* First breakpoint bytes in range, missing last bytes*/
     else if ( bp->address >= start && bp->address <= data_end ) 
-      __memcpy(bp->address - start + out, (void *)&bp->original_insn, bp_size - (bp_end - data_end));
+      memcpy(bp->address - start + out, (void *)&bp->original_insn, bp_size - (bp_end - data_end));
   }
 
   return 0;
@@ -1165,13 +1167,13 @@ void dbg_resume_all_tasks(void)
 /*
  *  Echo command (debug purpose only).
  */
-response_packet * __cmd_echo(request_packet * pkt, int size)
+response_packet * __cmd_echo(request_packet * pkt, size_t size)
 {
   response_packet * response;
 
   response = alloc_packet(size); 
   if ( response )
-    __memcpy(response, pkt, size);
+    memcpy(response, pkt, size);
 
   return response;
 }
@@ -1249,14 +1251,14 @@ void trigger_stack_overflow(char * payload)
 /*
  *  Triggers a stack overflow in a given task context (debug purpose only).
  */
-response_packet * __cmd_trigger_stack_overflow(task_id tid, char * str, int size)
+response_packet * __cmd_trigger_stack_overflow(task_id tid, char * str, size_t size)
 {
   response_packet * response;
   rex_task * target;
   char ** payload;
 
   payload = malloc(size + 1);
-  __memcpy(payload, str, size + 1);
+  memcpy(payload, str, size + 1);
 
   response = alloc_response_packet(0);
   target = get_task_from_id(tid);
@@ -1318,7 +1320,7 @@ response_packet * __cmd_attach(void)
     create_dbg_heap((void *)DBG_HEAP_BASE_ADDR, DBG_HEAP_SIZE);
     create_tasks_mapping();
     install_interrupt_handlers();
-    __memset(__scratch_buffer, 0, sizeof(__scratch_buffer));
+    memset(__scratch_buffer, 0, sizeof(__scratch_buffer));
 
     trace_engine_init();
 
@@ -1355,12 +1357,15 @@ response_packet * __cmd_detach(void)
   return response;
 }
 
-response_packet * __cmd_get_num_tasks(void)
+//response_packet * __cmd_get_num_tasks(void)
+response_packet * __cmd_get_system_info(void)
 {
   response_packet * response;
 
-  response = alloc_response_packet(sizeof(response->num_tasks));
-  response->num_tasks = tlist.num_tasks;
+  response = alloc_response_packet(sizeof(response->system_info));
+  response->system_info.cpuid = cpuid().i;
+  response->system_info.cpsr = get_cpsr();
+  response->system_info.num_tasks = tlist.num_tasks;
 
   return response;
 }
@@ -1376,7 +1381,7 @@ response_packet * __cmd_get_task_info(task_id tid)
   {
     response->task_info.wait_signals = task->wait_signals;
     response->task_info.active_signals = task->active_signals;
-    __memcpy(response->task_info.name, task->name, TASK_NAME_SIZE);
+    memcpy(response->task_info.name, task->name, TASK_NAME_SIZE);
   }
   else
     response->error_code = ERROR_TASK_NOT_FOUND;
@@ -1418,7 +1423,7 @@ response_packet * __cmd_resume_task(task_id tid)
   return response;
 }
 
-response_packet * __cmd_read_memory(void * start, unsigned int size)
+response_packet * __cmd_read_memory(void * start, size_t size)
 {
   response_packet * response;
 
@@ -1431,7 +1436,7 @@ response_packet * __cmd_read_memory(void * start, unsigned int size)
   return response;
 }
 
-response_packet * __cmd_write_memory(void * dest, void * data, int size)
+response_packet * __cmd_write_memory(void * dest, void * data, size_t size)
 {
   response_packet * response;
 
@@ -1439,7 +1444,7 @@ response_packet * __cmd_write_memory(void * dest, void * data, int size)
 
   if ( mmu_probe_write(dest, size) )
   {
-    __memcpy(dest, data, size);
+    memcpy(dest, data, size);
   }
   else
     response->error_code = ERROR_INVALID_MEMORY_ACCESS;
@@ -1675,7 +1680,7 @@ response_packet * __cmd_get_tracepoint_status(void * address)
   return response;
 }
 
-response_packet * __cmd_set_tracepoint_condition(void * address, char type, char * code, unsigned int size)
+response_packet * __cmd_set_tracepoint_condition(void * address, char type, char * code, size_t size)
 {
   response_packet * response;
   breakpoint * tp;
@@ -1705,7 +1710,7 @@ response_packet * __cmd_set_tracepoint_condition(void * address, char type, char
     case TRACEPOINT_ACTION_EXEC_NATIVE:
       tp->trace.condition.type = type;
       tp->trace.condition.size = size;
-      __memcpy(tp->trace.condition.code, code, size);
+      memcpy(tp->trace.condition.code, code, size);
       break;
 
     default:
@@ -1716,7 +1721,7 @@ response_packet * __cmd_set_tracepoint_condition(void * address, char type, char
   return response;
 }
 
-response_packet * __cmd_add_tracepoint_action(void * address, char type, char * code, unsigned int size)
+response_packet * __cmd_add_tracepoint_action(void * address, char type, char * code, size_t size)
 {
   response_packet * response;
   breakpoint * tp;
@@ -1752,7 +1757,7 @@ response_packet * __cmd_add_tracepoint_action(void * address, char type, char * 
         free(action);
         break;
       }
-      __memcpy(action->exec.code, code, size);
+      memcpy(action->exec.code, code, size);
       action->exec.size = size;
       break;
 
@@ -1794,7 +1799,7 @@ response_packet * __cmd_get_tracebuffer_frame(unsigned int n)
   foreach_trace_entry(tframe, tentry)
   {
     entry_size = trace_entry_get_size(tentry);
-    __memcpy(pentry, &tentry->type, entry_size);
+    memcpy(pentry, &tentry->type, entry_size);
     pentry += entry_size;
   }
 

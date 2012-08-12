@@ -65,6 +65,7 @@ typedef struct
   code; \
   cpu_restore_interrupts(int_mask); \
 
+int get_cpsr(void);
 int cpu_interrupts_disable(void);
 int cpu_interrupts_enable(void);
 void cpu_restore_interrupts(int);

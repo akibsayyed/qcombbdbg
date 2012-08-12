@@ -21,6 +21,8 @@
 #ifndef __CMD_H
 #define __CMD_H
 
+#include <stddef.h>
+
 #include "rex.h"
 
 /* Hooked command from the diagnostic task */
@@ -51,7 +53,7 @@ typedef struct __attribute__((packed, aligned(4)))
   {
     struct {
       void * base;
-      unsigned int size;
+      size_t size;
     } read;
     
     struct {
@@ -69,10 +71,10 @@ typedef struct __attribute__((packed, aligned(4)))
 
 } response_packet;
 
-response_packet * alloc_response_packet(int);
+response_packet * alloc_response_packet(size_t);
 
-response_packet * __cmd_read_memory(void *, int);
-response_packet * __cmd_write_memory(void *, void *, int);
+response_packet * __cmd_read_memory(void *, size_t);
+response_packet * __cmd_write_memory(void *, void *, size_t);
 
 #endif
 

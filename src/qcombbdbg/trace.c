@@ -22,6 +22,7 @@
  *  trace.c: The tracepoint engine, including the tracepoint VM.
  */
 
+#include "string.h"
 #include "core.h"
 #include "mmu.h"
 #include "interrupts.h"
@@ -201,7 +202,7 @@ int trace_buffer_trace_registers(trace_frame * tframe, saved_context * ctx)
   {
     tentry = malloc(__builtin_offsetof(trace_entry, entry) + sizeof(trace_registers_entry));
     tentry->type = TRACE_ENTRY_REGS;
-    __memcpy(&tentry->entry.regs.ctx, ctx, sizeof(saved_context));
+    memcpy(&tentry->entry.regs.ctx, ctx, sizeof(saved_context));
     tentry->entry.regs.ctx.sp = (int)(ctx + 1);
 
     return trace_frame_add_entry(tframe, tentry);
@@ -390,7 +391,7 @@ trace_vm_state * trace_vm_state_create(saved_context * saved_ctx, trace_frame * 
     return 0;
   }
 
-  __memcpy(state->arm_ctx, saved_ctx, sizeof(saved_context));
+  memcpy(state->arm_ctx, saved_ctx, sizeof(saved_context));
   state->arm_ctx->sp = (int)(saved_ctx + 1);
   state->base_address = 0;
   state->pc = 0;

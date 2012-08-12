@@ -21,6 +21,8 @@
 #ifndef __CMD_H
 #define __CMD_H
 
+#include <stddef.h>
+
 #include "rex.h"
 
 #define DBG_HEAP_BASE_ADDR 0x1e00000
@@ -69,7 +71,8 @@ enum cmd_type
   CMD_DETACH,
 
   /* Thread info commands */
-  CMD_GET_NUM_TASKS,
+  //CMD_GET_NUM_TASKS,
+  CMD_GET_SYSTEM_INFO,
   CMD_GET_TASK_INFO,
   CMD_GET_TASK_STATE,
 
@@ -232,7 +235,7 @@ typedef struct __packed _breakpoint
       struct __packed {
         char type;
         void * code;
-        unsigned int size;
+        size_t size;
       } condition;
     } trace;
 
@@ -254,7 +257,7 @@ typedef struct __attribute__((packed, aligned(4)))
 
 typedef struct __attribute__((packed, aligned(4)))
 {
-  int num_tasks;
+  unsigned int num_tasks;
   task_entry * tasks;
 } task_list;
 
@@ -270,7 +273,7 @@ typedef struct __attribute__((packed, aligned(4)))
 
     struct __packed {
       void * base;
-      unsigned int size;
+      size_t size;
     } read;
     
     struct __packed {
@@ -345,13 +348,19 @@ typedef struct __attribute__((packed, aligned(4)))
 
   union __packed
   {
-    int num_tasks;
+    unsigned int num_tasks;
     int task_state;
-    int size;
+    size_t size;
     int tvar_value;
     char data[1];
     long long int result;
     context ctx;
+    
+    struct __packed {
+      int cpuid;
+      int cpsr;
+      int num_tasks;
+    } system_info;
 
     struct __packed {
       int wait_signals;
@@ -364,8 +373,8 @@ typedef struct __attribute__((packed, aligned(4)))
       char circular;
       unsigned int tframes;
       unsigned int tcreated;
-      unsigned int tsize;
-      unsigned int tfree;
+      size_t tsize;
+      size_t tfree;
     } tstatus;
 
     struct __packed {
@@ -389,32 +398,33 @@ typedef struct __attribute__((packed, aligned(4)))
   context ctx;
 } event_packet;
 
-void * malloc(int);
+void * malloc(size_t);
 void free(void *);
-response_packet * alloc_response_packet(int);
-int dbg_read_memory(void *, void *, unsigned int);
+response_packet * alloc_response_packet(size_t);
+int dbg_read_memory(void *, void *, size_t);
 void dbg_write_insn(void *, char, int);
 void dbg_enable_all_tracepoints(void);
 void dbg_disable_all_tracepoints(void);
 
 #ifdef DEBUG
-response_packet * __cmd_echo(request_packet *, int);
+response_packet * __cmd_echo(request_packet *, size_t);
 response_packet * __cmd_call_routine(long long int (* f)(int, int, int, int), int, int, int, int);
 response_packet * __cmd_trigger_exception(task_id, int);
-response_packet * __cmd_trigger_stack_overflow(task_id, char *, int);
+response_packet * __cmd_trigger_stack_overflow(task_id, char *, size_t);
 response_packet * __cmd_send_signal(task_id, int);
 response_packet * __cmd_reloc_insn(void *, void *);
 #endif
 
 response_packet * __cmd_attach(void);
 response_packet * __cmd_detach(void);
-response_packet * __cmd_get_num_tasks(void);
+//response_packet * __cmd_get_num_tasks(void);
+response_packet * __cmd_get_system_info(void);
 response_packet * __cmd_get_task_info(task_id);
 response_packet * __cmd_get_task_state(task_id);
 response_packet * __cmd_stop_task(task_id);
 response_packet * __cmd_resume_task(task_id);
-response_packet * __cmd_read_memory(void *, unsigned int);
-response_packet * __cmd_write_memory(void *, void *, int);
+response_packet * __cmd_read_memory(void *, size_t);
+response_packet * __cmd_write_memory(void *, void *, size_t);
 response_packet * __cmd_read_registers(task_id);
 response_packet * __cmd_write_registers(task_id, context *);
 response_packet * __cmd_insert_breakpoint(void *, char);
@@ -431,8 +441,8 @@ response_packet * __cmd_remove_tracepoint(void *);
 response_packet * __cmd_enable_tracepoint(void *);
 response_packet * __cmd_disable_tracepoint(void *);
 response_packet * __cmd_get_tracepoint_status(void *);
-response_packet * __cmd_set_tracepoint_condition(void *, char, char *, unsigned int);
-response_packet * __cmd_add_tracepoint_action(void *, char, char *, unsigned int);
+response_packet * __cmd_set_tracepoint_condition(void *, char, char *, size_t);
+response_packet * __cmd_add_tracepoint_action(void *, char, char *, size_t);
 response_packet * __cmd_get_tracebuffer_frame(unsigned int);
 
 #endif

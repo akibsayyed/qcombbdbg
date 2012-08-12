@@ -35,7 +35,7 @@ require 'diagtaskclient'
 module Commands
   ATTACH = 0
   DETACH = 1
-  GET_NUM_TASKS = 2
+  GET_SYSTEM_INFO = 2
   GET_TASK_INFO = 3
   GET_TASK_STATE = 4
   STOP_TASK = 5
@@ -450,9 +450,15 @@ class GdbProxy
     end
   end
 
-  def dbg_get_num_tasks
-    resp = dbg_send_cmd(Commands::GET_NUM_TASKS)
-    resp.unpack('V')[0]
+  def dbg_get_system_info
+    resp = dbg_send_cmd(Commands::GET_SYSTEM_INFO)
+    cpuid, cpsr, num_tasks = resp.unpack('V3')
+
+    {
+      :cpuid => cpuid,
+      :cpsr => cpsr,
+      :num_tasks => num_tasks
+    }
   end
 
   def dbg_stop_task(tid)
@@ -477,7 +483,7 @@ class GdbProxy
   end
 
   def build_xml_thread_list
-    @ntasks ||= dbg_get_num_tasks
+    @ntasks ||= dbg_get_system_info[:num_tasks]
     thr_xml_template = '<?xml version="1.0"?><threads></threads>'
     thr_xml = REXML::Document.new(thr_xml_template)
 
@@ -685,7 +691,7 @@ class GdbProxy
         send_packet('OK')
 
       when /^qfThreadInfo/
-        @ntasks ||= dbg_get_num_tasks
+        @ntasks ||= dbg_get_system_info[:num_tasks]
         send_packet("m#{(1..@ntasks).to_a.map{|t| t.to_s(16)}.join(',')}")
 
       when /^qsThreadInfo/
@@ -1023,20 +1029,20 @@ class GdbProxy
         end
       
       # Custom command, triggers exception in remote task (debug purpose only).
-      when /^xCustom:Exception:(.*):(.*)/
+      when /^qQcombbdbg:Exception:(.*):(.*)/
         dbg_send_cmd(Commands::DEBUG_EXCEPTION,
           [ $1.hex, :u32 ], [ $2.hex, :u32 ]
         )
         send_packet('OK')
          
       # Custom command, triggers exception in remote task (debug purpose only).
-      when /^xCustom:Overflow:(.*):(.*)/
+      when /^qQcombbdbg:Overflow:(.*):(.*)/
         dbg_send_cmd(Commands::DEBUG_OVERFLOW,
           [ $1.hex, :u32 ], [ $2, :blob ]
         )
         send_packet('OK')
 
-      when /^xCustom:Reloc:(.*):(.*)/
+      when /^qQcombbdbg:Reloc:(.*):(.*)/
         src = $1.hex
         dst = $2.hex
         dbg_send_cmd(Commands::DEBUG_RELOC_INSN,
@@ -1045,7 +1051,8 @@ class GdbProxy
         )
         send_packet('OK')
 
-      when /^xCustom:Trace:(.*):(.*)/
+      # Custom tracepoint debug commands
+      when /^qQcomddbg:Trace:(.*):(.*)/
         addr = $1.hex
         pass = $2.hex
         kind = CpuState::THUMB
@@ -1053,15 +1060,31 @@ class GdbProxy
         dbg_enable_tracepoint(addr)
         send_packet('OK')
 
-      when /^xCustom:InfoTP:(.*)/
+      when /^qCombbdbg:InfoTP:(.*)/
         addr = $1.hex
         tpstatus = dbg_get_tracepoint_status(addr)
         send_packet("V#{tpstatus[:hits].to_s(16)}:#{tpstatus[:usage].to_s(16)}")
 
-      when /^xCustom:Frame:(.*)/
+      when /^qQcombbdbg:Frame:(.*)/
         n = $1.hex
         frame = dbg_get_tracebuffer_frame(n)
         send_packet('OK')
+
+      when /^qQcombbdbg:SystemInfo/
+        sysinfo = dbg_get_system_info
+        irq_status = ((sysinfo[:cpsr] & 0x80) != 0) ? 'Disabled' : 'Enabled'
+        fiq_status = ((sysinfo[:cpsr] & 0x40) != 0) ? 'Disabled' : 'Enabled'
+        cpu_mode = {
+          0b10000 => 'User',
+          0b10001 => 'FIQ',
+          0b10010 => 'IRQ',
+          0b10011 => 'Supervisor',
+          0b10111 => 'Abort',
+          0b11011 => 'Undefined',
+          0b11111 => 'System'
+        }[sysinfo[:cpsr] & 0x1f]
+        
+        send_packet("CPU Id:0x#{sysinfo[:cpuid].to_s(16).rjust(8,'0')}; CPU Mode:#{cpu_mode}; IRQ:#{irq_status}; FIQ:#{fiq_status}; NumberOfTasks:#{sysinfo[:num_tasks]}")
 
     else
       fail data #XXX: remove
