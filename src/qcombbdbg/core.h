@@ -24,6 +24,7 @@
 #include <stddef.h>
 
 #include "rex.h"
+#include "mmu.h"
 
 #define DBG_HEAP_BASE_ADDR 0x1e00000
 #define DBG_HEAP_SIZE 0x80000
@@ -71,7 +72,6 @@ enum cmd_type
   CMD_DETACH,
 
   /* Thread info commands */
-  //CMD_GET_NUM_TASKS,
   CMD_GET_SYSTEM_INFO,
   CMD_GET_TASK_INFO,
   CMD_GET_TASK_STATE,
@@ -113,6 +113,20 @@ enum cmd_type
   CMD_DEBUG_RELOC_INSN,   /* Relocate an instruction */
 #endif
 };
+
+enum cmd_system_info_class
+{
+  /* Query CPU relative information */
+  CMD_SYSTEM_INFO_CPU,
+
+  /* Query the memory map of the debugger address space */
+  CMD_SYSTEM_INFO_MEMORY,
+
+  /* Query OS-related information */
+  CMD_SYSTEM_INFO_RTOS
+};
+
+#define SYSTEM_INFO_RTOS_REX 0
 
 /*
  *  Responses are synchronous packets resulting from a debugger command.
@@ -268,6 +282,7 @@ typedef struct __attribute__((packed, aligned(4)))
   char cmd_type;
   union __packed
   {
+    char system_info_class;
     task_id tid;
     unsigned int frame_num;
 
@@ -357,9 +372,22 @@ typedef struct __attribute__((packed, aligned(4)))
     context ctx;
     
     struct __packed {
-      int cpuid;
-      int cpsr;
-      int num_tasks;
+      union {
+        struct __packed {
+          int cpsr;
+          int id;
+        } cpu;
+
+        struct __packed {
+          unsigned int num_regions;
+          memory_region map[1];
+        } memory;
+
+        struct __packed {
+          char os;
+          unsigned int num_tasks;
+        } rtos;
+      };
     } system_info;
 
     struct __packed {
@@ -417,8 +445,7 @@ response_packet * __cmd_reloc_insn(void *, void *);
 
 response_packet * __cmd_attach(void);
 response_packet * __cmd_detach(void);
-//response_packet * __cmd_get_num_tasks(void);
-response_packet * __cmd_get_system_info(void);
+response_packet * __cmd_get_system_info(char);
 response_packet * __cmd_get_task_info(task_id);
 response_packet * __cmd_get_task_state(task_id);
 response_packet * __cmd_stop_task(task_id);

@@ -22,6 +22,8 @@
  *  mmu.c: Handling of the memory management unit.
  */
 
+#include "string.h"
+#include "core.h"
 #include "mmu.h"
 
 #define ARM_ASSEMBLY(arm, ...) \
@@ -351,16 +353,16 @@ int mmu_probe_read(void * addr, size_t length)
     sections_nr++;
 
   /* Checks access right for each section */
-  for ( i = 0; i < sections_nr; ++i )
+  for ( i = 0; i < sections_nr; i++ )
   {
     section_desc_entry = &ttbr[((unsigned int)addr >> MMU_PAGE_SECTION_SHIFT) + i];
 
-    if ( section_desc_entry->type == MMU_PAGE_TYPE_UNMAPPED )
+    if ( section_desc_entry->bits.type == MMU_PAGE_TYPE_UNMAPPED )
       return 0;
 
     if ( ! (mmu_ctrl & (MMU_CONTROL_SYSTEM_PROTECT | MMU_CONTROL_ROM_PROTECT)) )
     {
-      if ( section_desc_entry->ap == 0 )
+      if ( section_desc_entry->bits.ap == 0 )
         return 0;
     }
   }
@@ -400,14 +402,14 @@ int mmu_probe_write(void * addr, size_t length)
     sections_nr++;
 
   /* Checks access right for each section */
-  for ( i = 0; i < sections_nr; ++i )
+  for ( i = 0; i < sections_nr; i++ )
   {
     section_desc_entry = &ttbr[((unsigned int)addr >> MMU_PAGE_SECTION_SHIFT) + i];
 
-    if ( section_desc_entry->type == MMU_PAGE_TYPE_UNMAPPED )
+    if ( section_desc_entry->bits.type == MMU_PAGE_TYPE_UNMAPPED )
       return 0;
 
-    if ( section_desc_entry->ap == 0 )
+    if ( section_desc_entry->bits.ap == 0 )
       return 0;
   }
 
@@ -437,9 +439,9 @@ int mmu_set_access_protection(void * addr, int prot)
   section_desc_entry = &ttbr[(unsigned int)addr >> MMU_PAGE_SECTION_SHIFT];
 
   /* Saving previous access protections */
-  if ( section_desc_entry->type == MMU_PAGE_TYPE_UNMAPPED )
+  if ( section_desc_entry->bits.type == MMU_PAGE_TYPE_UNMAPPED )
     prev_prot = MMU_PROT_NOACCESS;
-  else if ( section_desc_entry->ap == MMU_SECTION_AP_READ_ONLY )
+  else if ( section_desc_entry->bits.ap == MMU_SECTION_AP_READ_ONLY )
     prev_prot = MMU_PROT_READ_ONLY;
   else
     prev_prot = MMU_PROT_READ_WRITE;
@@ -450,17 +452,17 @@ int mmu_set_access_protection(void * addr, int prot)
   switch ( prot )
   {
     case MMU_PROT_READ_ONLY:
-      section_desc_entry->type = MMU_PAGE_TYPE_SECTION;
-      section_desc_entry->ap = MMU_SECTION_AP_READ_ONLY;
+      section_desc_entry->bits.type = MMU_PAGE_TYPE_SECTION;
+      section_desc_entry->bits.ap = MMU_SECTION_AP_READ_ONLY;
       break;
 
     case MMU_PROT_READ_WRITE:
-      section_desc_entry->type = MMU_PAGE_TYPE_SECTION;
-      section_desc_entry->ap = MMU_SECTION_AP_READ_WRITE;
+      section_desc_entry->bits.type = MMU_PAGE_TYPE_SECTION;
+      section_desc_entry->bits.ap = MMU_SECTION_AP_READ_WRITE;
       break;
 
     case MMU_PROT_NOACCESS:
-      section_desc_entry->type = MMU_PAGE_TYPE_UNMAPPED;
+      section_desc_entry->bits.type = MMU_PAGE_TYPE_UNMAPPED;
       break;
   }
   
@@ -469,5 +471,119 @@ int mmu_set_access_protection(void * addr, int prot)
   mmu_enable();
 
   return prev_prot;
+}
+
+/*
+ *  Retrieves the current memory map.
+ *  Returns an array of memory_region structures in map parameter.
+ *  Number of regions returned in num_regions parameter.
+ *
+ *  Returned memory must be freed by the caller.
+ */
+int mmu_get_memory_map(memory_region * map[], unsigned int * num_regions)
+{
+  mmu_page_table ttbr;
+  mmu_section_descriptor prev_section, current_section; 
+  memory_region * memory_map, * current_region;
+  void * current_section_addr;
+
+  int i;
+  unsigned int regions_count;
+
+  ttbr = mmu_get_translation_table();
+
+  /* 
+   * First pass, we compute the number of regions. 
+   */
+  regions_count = 0;
+  prev_section.i = 0;
+  for ( i = 0; i < 1 << (32 - MMU_PAGE_SECTION_SHIFT); i++ )
+  {
+    current_section = ttbr[i];
+    if ( current_section.bits.type != MMU_PAGE_TYPE_UNMAPPED )
+      if ( prev_section.bits.type != current_section.bits.type )
+        regions_count++;
+
+    prev_section = current_section;
+  }
+
+  /* Allocate the map structure */
+  memory_map = (memory_region *) malloc(regions_count * sizeof(memory_region));
+  if ( !memory_map )
+  {
+    *num_regions = 0;
+    *map = NULL;
+
+    return ERROR_NO_MEMORY_AVAILABLE;
+  }
+
+  memset(memory_map, 0, regions_count * sizeof(memory_region));
+
+  /*
+   *  Now fill in the memory map.
+   */
+  regions_count = 0;
+  prev_section.i = 0;
+  for ( i = 0; i < 1 << (32 - MMU_PAGE_SECTION_SHIFT); i++ )
+  {
+    current_section = ttbr[i];
+    current_section_addr = (void *)(i << MMU_PAGE_SECTION_SHIFT);
+
+    if ( current_section.bits.type != MMU_PAGE_TYPE_UNMAPPED )
+    {
+      if ( prev_section.bits.type != current_section.bits.type )
+      {
+        /* Close previous region */
+        if ( prev_section.bits.type != MMU_PAGE_TYPE_UNMAPPED )
+        {
+          memory_map[regions_count].length = 
+            current_section_addr - memory_map[regions_count].base_address;
+
+          regions_count++;
+        }
+        
+        /* Start new one */
+        current_region = &memory_map[regions_count];
+        current_region->base_address = current_section_addr;
+        current_region->rights.exec =
+        current_region->rights.read = 1;
+        current_region->rights.write = (current_section.bits.ap == MMU_SECTION_AP_READ_WRITE);
+      }
+    }
+    else
+    {
+      /* Close previous region */
+      if ( prev_section.bits.type != MMU_PAGE_TYPE_UNMAPPED )
+      {
+        memory_map[regions_count].length = 
+          current_section_addr - memory_map[regions_count].base_address;
+
+        regions_count++;
+      }
+    }
+
+    prev_section = current_section;
+  }
+
+  if ( prev_section.bits.type != MMU_PAGE_TYPE_UNMAPPED )
+  {
+    memory_map[regions_count].length = 
+      1 + ~(unsigned int)memory_map[regions_count].base_address;
+    
+    regions_count++;
+  }
+
+  *num_regions = regions_count; 
+  *map = memory_map;
+
+  return 0;
+}
+
+/*
+ *  Release previously allocated memory map.
+ */
+void mmu_put_memory_map(memory_region * map)
+{
+  free(map);
 }
 

@@ -107,8 +107,17 @@ void create_dbg_heap(void * base, size_t size)
  */
 void * malloc(size_t size)
 {
-  return heap_malloc(&dbg_heap, size);
+  return heap_malloc(&dbg_heap, size, __FILE__, __LINE__);
 }
+
+/*
+ *  Memory reallocation in the debugger heap.
+ * 
+void * realloc(void * ptr, size_t size)
+{
+  return heap_realloc(&dbg_heap, ptr, size, __FILE__, __LINE__);
+}
+ */
 
 /*
  *  Memory free in the debugger heap.
@@ -1357,16 +1366,48 @@ response_packet * __cmd_detach(void)
   return response;
 }
 
-//response_packet * __cmd_get_num_tasks(void)
-response_packet * __cmd_get_system_info(void)
+response_packet * __cmd_get_system_info(char info)
 {
   response_packet * response;
+  memory_region * map;
+  unsigned int num_regions;
+  int result;
 
-  response = alloc_response_packet(sizeof(response->system_info));
-  response->system_info.cpuid = cpuid().i;
-  response->system_info.cpsr = get_cpsr();
-  response->system_info.num_tasks = tlist.num_tasks;
+  switch ( info )
+  {
+    case CMD_SYSTEM_INFO_CPU:
+      response = alloc_response_packet(sizeof(response->system_info.cpu));
+      response->system_info.cpu.cpsr = get_cpsr();
+      response->system_info.cpu.id = cpuid().i;
+      break;
 
+    case CMD_SYSTEM_INFO_MEMORY:
+      map = 0;
+      result = mmu_get_memory_map(&map, &num_regions);
+      if ( result < 0 )
+      {
+        response = alloc_response_packet(4);
+        response->error_code = result;
+        //response->num_tasks = result;
+        return response;
+      }
+
+      response = alloc_response_packet(
+        __builtin_offsetof(response_packet, system_info.memory.map) + num_regions * sizeof(memory_region)
+      );
+      response->system_info.memory.num_regions = num_regions;
+      memcpy(&response->system_info.memory.map, map, num_regions * sizeof(memory_region));
+
+      mmu_put_memory_map(map);
+      break;
+
+    case CMD_SYSTEM_INFO_RTOS:
+      response = alloc_response_packet(sizeof(response->system_info.rtos));
+      response->system_info.rtos.os = SYSTEM_INFO_RTOS_REX;
+      response->system_info.rtos.num_tasks = tlist.num_tasks;
+      break;
+  }
+  
   return response;
 }
 

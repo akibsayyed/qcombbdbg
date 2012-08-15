@@ -138,7 +138,8 @@ extern void rex_enter_critical_section(rex_critical_section *);
 extern void rex_leave_critical_section(rex_critical_section *);
 
 extern void heap_create(rex_heap *, void *, size_t, void (*)(rex_heap *));
-extern void * heap_malloc(rex_heap *, size_t);
+extern void * heap_malloc(rex_heap *, size_t, const char *, unsigned int);
+/* extern void * heap_realloc(rex_heap *, void *, size_t, const char *, unsigned int); */
 extern void heap_free(rex_heap *, void *);
 
 extern void rex_fatal_error(int, const char *, const char *);

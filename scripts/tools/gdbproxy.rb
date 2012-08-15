@@ -70,6 +70,18 @@ module Commands
   DEBUG_RELOC_INSN = 0x85
 end
 
+module SystemInfo
+  CPU = 0
+  MEMORY = 1
+  RTOS = 2
+end
+
+module MemoryRights
+  EXECUTABLE = 1
+  WRITABLE = 2
+  READABLE = 4
+end 
+
 module Event
   STOP = 0
   BKPT = 1
@@ -290,6 +302,7 @@ class GdbProxy
     'QStartNoAckMode',
     'qXfer:features:read',
     'qXfer:threads:read',
+    'qXfer:memory-map:read',
     'EnableDisableTracepoints',
     'ConditionalTracepoints'
   ]
@@ -450,15 +463,35 @@ class GdbProxy
     end
   end
 
-  def dbg_get_system_info
-    resp = dbg_send_cmd(Commands::GET_SYSTEM_INFO)
-    cpuid, cpsr, num_tasks = resp.unpack('V3')
+  def dbg_get_system_info(info_class)
+    resp = dbg_send_cmd(Commands::GET_SYSTEM_INFO, [ info_class, :u8 ])
 
-    {
-      :cpuid => cpuid,
-      :cpsr => cpsr,
-      :num_tasks => num_tasks
-    }
+    case info_class
+      when SystemInfo::CPU
+        cpsr, cpuid = resp.unpack('V2')
+        info = { :cpsr => cpsr, :cpuid => cpuid }
+    
+      when SystemInfo::MEMORY
+        num_regions = resp.unpack('V')
+        info = { :map => [] }
+        (resp.size / 12).times do |i|
+          info[:map].push({ 
+            :base => resp[i * 12 + 4, 4].unpack('V')[0],
+            :length => resp[i * 12 + 8, 4].unpack('V')[0],
+            :rights => resp[i * 12 + 12, 4].unpack('V')[0]
+          })
+        end
+
+      when SystemInfo::RTOS
+        os, num_tasks = resp.unpack('CV')
+        info = { :os => os, :num_tasks => num_tasks }
+    end
+
+    info
+  end
+
+  def dbg_get_num_tasks
+    dbg_get_system_info(SystemInfo::RTOS)[:num_tasks]
   end
 
   def dbg_stop_task(tid)
@@ -483,7 +516,7 @@ class GdbProxy
   end
 
   def build_xml_thread_list
-    @ntasks ||= dbg_get_system_info[:num_tasks]
+    @ntasks ||= dbg_get_num_tasks
     thr_xml_template = '<?xml version="1.0"?><threads></threads>'
     thr_xml = REXML::Document.new(thr_xml_template)
 
@@ -496,6 +529,33 @@ class GdbProxy
     end
 
     thr_xml.to_s
+  end
+
+  def build_xml_memory_map
+    map = dbg_get_system_info(SystemInfo::MEMORY)[:map]
+
+    map_xml_template = <<-MEMMAP
+<?xml version="1.0"?>
+<!DOCTYPE memory-map
+          PUBLIC "+//IDN gnu.org//DTD GDB Memory Map V1.0 //EN"
+                 "http://sourceware.org/gdb/gdb-memory-map.dtd">
+<memory-map>
+</memory-map>
+    MEMMAP
+    
+    map_xml = REXML::Document.new(map_xml_template)
+    map.each do |region|
+      #mem_type = (region[:rights] & MemoryRights::WRITABLE == 0) ? 'rom' : 'ram'
+      mem_type = 'ram' # gdb tries to put hbp on read-only regions, so enforce showing rw
+      region_entry = REXML::Element.new('memory')
+      region_entry.add_attribute('type', mem_type)
+      region_entry.add_attribute('start', "0x%08x" % region[:base])
+      region_entry.add_attribute('length', "0x%x" % region[:length])
+
+      map_xml.root.add_element(region_entry)
+    end
+   
+    map_xml.to_s
   end
 
   def dbg_get_task_state(tid)
@@ -666,12 +726,10 @@ class GdbProxy
           else
             'l'
           end
-
         send_packet("#{code}#{TARGET_XML[offset, length]}")
 
       when /^qXfer:threads:read::(.*),(.*)/
         offset, length = $1.hex, $2.hex
-        
         @xml_thread_list = build_xml_thread_list if offset == 0
         code = 
           if offset + length < @xml_thread_list.length
@@ -679,8 +737,18 @@ class GdbProxy
           else
             'l'
           end
-
         send_packet("#{code}#{@xml_thread_list[offset, length]}")
+
+      when /^qXfer:memory-map:read::(.*),(.*)/
+        offset, length = $1.hex, $2.hex
+        @xml_memory_map = build_xml_memory_map
+        code =
+          if offset + length < @xml_memory_map.length
+            'm'
+          else
+            'l'
+          end
+        send_packet("#{code}#{@xml_memory_map[offset, length]}")
 
       when /^QNonStop:(\d)/
         fail "Non-stop mode must be enabled" if $1.to_i == 0
@@ -691,7 +759,7 @@ class GdbProxy
         send_packet('OK')
 
       when /^qfThreadInfo/
-        @ntasks ||= dbg_get_system_info[:num_tasks]
+        @ntasks ||= dbg_get_num_tasks
         send_packet("m#{(1..@ntasks).to_a.map{|t| t.to_s(16)}.join(',')}")
 
       when /^qsThreadInfo/
@@ -1011,7 +1079,7 @@ class GdbProxy
         addr = $3.hex
         kind = $4.hex == 4 ? CpuState::ARM : CpuState::THUMB
         
-        ret= case $2.hex
+        ret = case $2.hex
           when 0
             if $1 == 'Z'
               dbg_insert_breakpoint(addr, kind)
@@ -1019,13 +1087,14 @@ class GdbProxy
               dbg_remove_breakpoint(addr, kind)
             end
         else
-          raise NotImplementedError
+          send_packet("'") # Not supported
+          return
         end
         
         if ret
           send_packet('OK')
         else
-          send_packet('E00')
+          send_packet("E00")
         end
       
       # Custom command, triggers exception in remote task (debug purpose only).
@@ -1071,9 +1140,10 @@ class GdbProxy
         send_packet('OK')
 
       when /^qQcombbdbg:SystemInfo/
-        sysinfo = dbg_get_system_info
-        irq_status = ((sysinfo[:cpsr] & 0x80) != 0) ? 'Disabled' : 'Enabled'
-        fiq_status = ((sysinfo[:cpsr] & 0x40) != 0) ? 'Disabled' : 'Enabled'
+        cpu_info = dbg_get_system_info(SystemInfo::CPU)
+        os_info = dbg_get_system_info(SystemInfo::RTOS)
+        irq_status = ((cpu_info[:cpsr] & 0x80) != 0) ? 'Disabled' : 'Enabled'
+        fiq_status = ((cpu_info[:cpsr] & 0x40) != 0) ? 'Disabled' : 'Enabled'
         cpu_mode = {
           0b10000 => 'User',
           0b10001 => 'FIQ',
@@ -1082,9 +1152,9 @@ class GdbProxy
           0b10111 => 'Abort',
           0b11011 => 'Undefined',
           0b11111 => 'System'
-        }[sysinfo[:cpsr] & 0x1f]
+        }[cpu_info[:cpsr] & 0x1f]
         
-        send_packet("CPU Id:0x#{sysinfo[:cpuid].to_s(16).rjust(8,'0')}; CPU Mode:#{cpu_mode}; IRQ:#{irq_status}; FIQ:#{fiq_status}; NumberOfTasks:#{sysinfo[:num_tasks]}")
+        send_packet("CPU Id:0x#{cpu_info[:cpuid].to_s(16).rjust(8,'0')}; CPU Mode:#{cpu_mode}; IRQ:#{irq_status}; FIQ:#{fiq_status}; NumberOfTasks:#{os_info[:num_tasks]}")
 
     else
       fail data #XXX: remove

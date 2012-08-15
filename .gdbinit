@@ -33,3 +33,7 @@ end
 define show system-info
   main packet qQcombbdbg:SystemInfo
 end
+
+define info hook-mem
+  echo Note: displayed memory attributes do not reflect reality.\n
+end

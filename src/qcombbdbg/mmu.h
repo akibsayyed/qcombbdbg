@@ -23,6 +23,18 @@
 
 #include <stddef.h>
 
+typedef struct 
+{
+  void * base_address;
+  size_t length;
+  struct 
+  {
+    int read : 1;
+    int write : 1;
+    int exec : 1;
+  } rights;
+} memory_region;
+
 typedef union 
 {
   unsigned int i;
@@ -84,22 +96,27 @@ enum page_access
   MMU_PROT_READ_WRITE
 };
 
-typedef struct __attribute__((packed))
+typedef union
 {
-  unsigned int type : 2;
-  unsigned int b : 1;
-  unsigned int c : 1;
-  unsigned int xn : 1; /* ARMv6 */
-  unsigned int domain : 4;
-  unsigned int imp : 1;
-  unsigned int ap : 2;
-  unsigned int tex : 3;
-  unsigned int apx : 1; /* ARMv6 */
-  unsigned int s : 1;
-  unsigned int ng : 1;
-  unsigned int super : 1;
-  unsigned int sbz : 1;
-  unsigned int base_address : 12;
+  unsigned int i;
+  
+  struct __attribute__((packed))
+  {
+    unsigned int type : 2;
+    unsigned int b : 1;
+    unsigned int c : 1;
+    unsigned int xn : 1; /* ARMv6 */
+    unsigned int domain : 4;
+    unsigned int imp : 1;
+    unsigned int ap : 2;
+    unsigned int tex : 3;
+    unsigned int apx : 1; /* ARMv6 */
+    unsigned int s : 1;
+    unsigned int ng : 1;
+    unsigned int super : 1;
+    unsigned int sbz : 1;
+    unsigned int base_address : 12;
+  } bits;
 } mmu_section_descriptor;
 
 typedef mmu_section_descriptor *mmu_page_table;
@@ -127,6 +144,8 @@ int mmu_probe_execute(void *);
 int mmu_set_access_protection(void *, int);
 void mmu_sync_insn_cache_at(void * addr);
 void mmu_sync_insn_cache_range(void * addr, size_t);
+int mmu_get_memory_map(memory_region **, unsigned int *);
+void mmu_put_memory_map(memory_region *);
 
 #endif
 

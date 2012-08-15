@@ -45,9 +45,8 @@ response_packet * __cmd_dispatcher(request_packet * packet, size_t size)
       response = __cmd_detach();
       break;
 
-    //case CMD_GET_NUM_TASKS:
     case CMD_GET_SYSTEM_INFO:
-      response = __cmd_get_system_info();
+      response = __cmd_get_system_info(packet->system_info_class);
       break;
 
     case CMD_GET_TASK_INFO:
